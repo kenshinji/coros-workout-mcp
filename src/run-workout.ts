@@ -15,7 +15,6 @@ import {
   RUN_GROUP_NAME,
   RUN_SOURCE_ID,
   RUN_SOURCE_URL,
-  DEFAULT_THRESHOLD_PACE_SEC,
   type RunStep,
   type RunSegmentKind,
   type RunExercisePayload,
@@ -37,14 +36,6 @@ export function parsePace(pace: string): number {
 export function formatPace(secPerKm: number): string {
   const total = Math.round(secPerKm);
   return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, "0")}`;
-}
-
-/**
- * Percent of threshold pace, as the API stores it (percent * 1000).
- * Faster pace -> higher percent, so this is the speed ratio, not the pace ratio.
- */
-function intensityPercent(secPerKm: number, thresholdSec: number): number {
-  return Math.round((thresholdSec / secPerKm) * 100) * 1000;
 }
 
 /**
@@ -70,7 +61,6 @@ export function runSortNo(topIndex: number, childIndex = 0): number {
 
 interface BuildContext {
   userId: number;
-  thresholdSec: number;
   nextId: number;
 }
 
@@ -107,10 +97,10 @@ function buildSegment(
     intensityCustom: 0,
     intensityDisplayUnit: 1,
     intensityMultiplier: 1000,
-    // The percent pair is stored crossed against the value pair: the slower
-    // pace carries the lower percent.
-    intensityPercent: intensityPercent(slow, ctx.thresholdSec),
-    intensityPercentExtend: intensityPercent(fast, ctx.thresholdSec),
+    // Left at 0 like the official web client: the server derives these from
+    // the athlete's current threshold pace and overwrites whatever we send.
+    intensityPercent: 0,
+    intensityPercentExtend: 0,
     intensityType: 3, // pace range
     intensityValue: fast * 1000,
     intensityValueExtend: slow * 1000,
@@ -195,8 +185,7 @@ function buildGroup(
 /** Flatten the step tree into the API's exercise array. */
 export function buildRunExercises(
   steps: RunStep[],
-  userId: string,
-  thresholdPaceSec: number = DEFAULT_THRESHOLD_PACE_SEC
+  userId: string
 ): RunExercisePayload[] {
   if (steps.length === 0) {
     throw new Error("A run workout needs at least one step.");
@@ -204,7 +193,6 @@ export function buildRunExercises(
 
   const ctx: BuildContext = {
     userId: Number(userId),
-    thresholdSec: thresholdPaceSec,
     nextId: 1,
   };
   const out: RunExercisePayload[] = [];

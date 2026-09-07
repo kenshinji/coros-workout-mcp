@@ -81,7 +81,8 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
 | Running workouts (`sportType 1`) | ✅ Warm-up, work, recovery, cool-down segments; distance or duration targets; pace ranges; repeat groups |
 | Listing existing workouts | ✅ |
 | Refreshing the exercise catalog | ✅ |
-| **Scheduling a workout to a date** | ❌ Workouts land in your library; you pick them on the watch manually. The `/training/schedule/*` endpoint exists but its parameters are not yet reverse-engineered |
+| Scheduling a workout to a date | ✅ Put a saved workout on a calendar day; list what's scheduled in a range |
+| Removing a scheduled workout | ❌ Delete endpoint not yet captured — remove it in Training Hub |
 | **Multi-week training plans** | ❌ `/training/plan/query` responds, but no create/write support |
 | Cycling / swimming workouts | ❌ Encodings not verified |
 
@@ -94,6 +95,8 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
 | `search_exercises` | Search ~383 exercises by name, muscle, body part, equipment |
 | `create_workout` | Build and push a strength workout to COROS |
 | `create_run_workout` | Build and push a structured running workout (intervals, tempo, fartlek, easy) |
+| `schedule_workout` | Put a saved workout on a calendar date |
+| `list_scheduled_workouts` | List workouts scheduled between two dates |
 | `update_exercises` | Fetch the latest exercise catalog from COROS and rebuild locally |
 | `list_workouts` | List existing workouts |
 
@@ -106,6 +109,10 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
 > "Build me a 5x800m interval session: 2km warm-up at 6:30-7:00, 800m reps at 4:35-4:50 with 2:30 jog recovery, 2km cool-down"
 >
 > "Read tomorrow's run from my calendar and create the matching COROS workout"
+>
+> "Schedule workout 480173655201071505 on 2026-09-08"
+>
+> "What have I got scheduled next week?"
 
 ## Running workouts
 
@@ -154,6 +161,19 @@ Repeats cannot be nested — that's an API limitation, not ours.
 You rarely need to write this by hand — describe the session in plain language and
 Claude fills it in. See the encoding notes in [CLAUDE.md](CLAUDE.md#running-workout-encoding)
 if you're working on the internals.
+
+## Scheduling
+
+Creating a workout puts it in your library. `schedule_workout` additionally pins it
+to a date so it shows up on that day in Training Hub and syncs to the watch:
+
+```
+schedule_workout(workoutId: "480173655201071505", date: "2026-09-08")
+```
+
+Scheduling one day leaves the rest of the plan untouched. To move a workout, schedule
+it on the new date and remove the old entry in Training Hub — there's no delete tool
+yet.
 
 ## Updating the exercise catalog
 

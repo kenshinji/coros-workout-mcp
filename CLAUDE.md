@@ -22,7 +22,7 @@ To run a single test file: `npx vitest run src/__tests__/exercise-catalog.test.t
 
 **5 source files, clear separation:**
 
-- `index.ts` — MCP server setup. Registers 7 tools (`authenticate_coros`, `check_coros_auth`, `search_exercises`, `create_workout`, `create_run_workout`, `update_exercises`, `list_workouts`) using `@modelcontextprotocol/sdk`. STDIO transport only.
+- `index.ts` — MCP server setup. Registers 9 tools (`authenticate_coros`, `check_coros_auth`, `search_exercises`, `create_workout`, `create_run_workout`, `schedule_workout`, `list_scheduled_workouts`, `update_exercises`, `list_workouts`) using `@modelcontextprotocol/sdk`. STDIO transport only.
 - `coros-api.ts` — COROS API client + payload construction. Handles auth (MD5 password hashing, token storage at `~/.config/coros-workout-mcp/auth.json`), and the workout creation flow: `resolveExercises()` → `calculateWorkout()` (POST `/training/program/calculate`) → `addWorkout()` (POST `/training/program/add`). Also contains `buildCatalogFromRaw()` for the `update_exercises` tool.
 - `exercise-catalog.ts` — In-memory exercise search engine. Loads `data/exercises.json` lazily, provides `findByName()` (exact, case-insensitive), `searchExercises()` (fuzzy name + muscle/bodyPart/equipment filters). The catalog is the single source of truth for exercise names used in `create_workout`.
 - `run-workout.ts` — Running workouts (`sportType: 1`). Builds the segment array from a `RunStep[]` tree (`buildRunExercises()`) and the workout envelope (`buildRunWorkoutPayload()`). Running has no exercise catalog — every segment is one of four fixed COROS templates in `RUN_SEGMENT_TEMPLATES`.
@@ -54,6 +54,35 @@ Derived from workouts created in the COROS web app and read back via `/training/
 - `intensityPercent`/`intensityPercentExtend` are percent-of-threshold-pace × 1000, paired **crossed** against the values (the slower pace carries the lower percent). Display-only — the watch follows `intensityValue`. Computed from `DEFAULT_THRESHOLD_PACE_SEC`.
 - `/calculate` returns `planDuration`, `planDistance`, `planSets`, `planTrainingLoad` for running (not the flat shape the strength endpoint returns).
 - Nested repeats are not supported by the API.
+- `intensityPercent`/`intensityPercentExtend` are sent as `0`: the server derives them
+  from the athlete's current threshold pace and overwrites whatever is sent. (Observed:
+  values sent at create time came back different, matching `floor(threshold / pace * 100)`
+  against the threshold pace shown on the Training Hub dashboard.)
+
+## Scheduling Encoding
+
+The whole schedule is **one plan document**, not per-day records. `GET
+/training/schedule/query?startDate&endDate&supportRestExercise=1` (dates as `YYYYMMDD`)
+returns it: `entities` are the dated slots, `programs` the workouts they point at,
+joined by `idInPlan`.
+
+Writing is `POST /training/schedule/update`:
+
+```json
+{
+  "entities":       [{ "happenDay": "20260910", "idInPlan": N, "sortNoInSchedule": 1 }],
+  "programs":       [ { ...GET /training/program/detail data..., "idInPlan": N } ],
+  "versionObjects": [{ "id": N, "status": 1 }],
+  "pbVersion": 2
+}
+```
+
+- `N` = the plan's `maxIdInPlan` + 1. The same value links all three arrays.
+- `sortNoInSchedule` orders multiple workouts within one day, from 1.
+- The write is an upsert of the listed slots — other days are untouched.
+- `scheduleWorkout()` reproduces this body byte-for-byte against a captured web-client
+  request.
+- Not captured yet: removing a scheduled workout.
 
 ## Exercise Catalog
 

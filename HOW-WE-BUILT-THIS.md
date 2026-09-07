@@ -136,6 +136,45 @@ Known gap, documented rather than papered over: workouts land in the library but
 be scheduled to a date. `/training/schedule/query` exists but rejected five guessed
 parameter shapes; that one still needs a real capture.
 
+## Phase 11: Scheduling (~Sep 7, 2026)
+
+Phase 10 shipped with a known gap: workouts landed in the library but couldn't be
+pinned to a date. Five guessed parameter shapes against `/training/schedule/query` had
+all returned "Service exceptions."
+
+The guesses were all wrong for one reason: it's a **GET**, not a POST. Every attempt
+had used the wrong HTTP method, so no parameter shape could ever have worked. Worth
+remembering — a uniformly-failing probe usually means a wrong assumption one level up
+from the thing being varied.
+
+This phase did need a browser, so the session cost came due: logging into the web app
+invalidated the API token, exactly as documented. Rather than fight it, capture ran
+first and re-authentication was deferred to the end.
+
+`read_network_requests` saw nothing — the SPA's XHRs weren't surfacing — so the capture
+was a `fetch`/`XMLHttpRequest` interceptor injected into the page, logging request and
+response bodies to a global. The first version truncated bodies at 6000 chars, which
+cut the payload mid-string; the second captured responses too, which turned out to
+matter more than the extra length.
+
+Having both sides made the decode a diff rather than a guess. `programs[0]` in the
+write body was exactly the `/training/program/detail` response, plus an `idInPlan`
+field — with one deliberate change: the web client zeroes every
+`intensityPercent`/`intensityPercentExtend` before sending. Checking that against the
+workout created in Phase 10 showed the server had already overwritten the values sent
+at creation time, recomputing them as `floor(threshold / pace * 100)` from the
+threshold pace on the athlete's dashboard. So Phase 10's `DEFAULT_THRESHOLD_PACE_SEC`
+constant was not just approximate but unnecessary, and it would have drifted as fitness
+changed. It was deleted.
+
+The last unknown was `idInPlan`, which went 2 then 3 across two captures. The schedule
+query response carries `maxIdInPlan` at the top level: the next slot is that plus one.
+
+Validation didn't need a live token or another write. Rebuilding the request body from
+the implementation's own rules and diffing it against the captured one came out
+byte-identical, which is a stronger check than a successful POST would have been — a
+POST only proves the server accepted something.
+
 ---
 
 ## The Pairing Dynamic

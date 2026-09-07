@@ -13,6 +13,7 @@ import type {
   WorkoutPayload,
   RunExercisePayload,
   RunCalculateResult,
+  SchedulePlan,
 } from "./types.js";
 import {
   REGION_URLS,
@@ -549,4 +550,84 @@ export async function addRunWorkout(
   payload.estimatedValue = calculated.trainingLoad;
   payload.distance = "0";
   return apiPost(auth, "/training/program/add", payload);
+}
+
+// --- Schedule API ---
+
+/** "2026-09-08" or "20260908" -> "20260908" */
+export function toApiDate(date: string): string {
+  const compact = date.replace(/-/g, "");
+  if (!/^\d{8}$/.test(compact)) {
+    throw new Error(`Invalid date "${date}". Expected YYYY-MM-DD or YYYYMMDD.`);
+  }
+  return compact;
+}
+
+/**
+ * The schedule is a single plan document: `entities` are the scheduled slots
+ * and `programs` the workouts they point at, joined by `idInPlan`.
+ */
+export async function querySchedule(
+  auth: AuthData,
+  startDate: string,
+  endDate: string
+): Promise<SchedulePlan> {
+  const result = (await apiGet(auth, "/training/schedule/query", {
+    startDate: toApiDate(startDate),
+    endDate: toApiDate(endDate),
+    supportRestExercise: 1,
+  })) as { data: SchedulePlan };
+  return result.data;
+}
+
+/** Fetch a saved workout in the shape /training/schedule/update expects. */
+export async function getWorkoutDetail(
+  auth: AuthData,
+  workoutId: string
+): Promise<Record<string, unknown>> {
+  const result = (await apiGet(auth, "/training/program/detail", {
+    id: workoutId,
+    supportRestExercise: 1,
+  })) as { data: Record<string, unknown> };
+  return result.data;
+}
+
+/**
+ * Put an existing workout on a date. Upserts a single slot — other days in the
+ * plan are left alone.
+ *
+ * `idInPlan` is a plan-wide counter: the next slot takes maxIdInPlan + 1, and
+ * the same value links the entity, the program copy and the version object.
+ */
+export async function scheduleWorkout(
+  auth: AuthData,
+  workoutId: string,
+  date: string,
+  sortNoInSchedule: number = 1
+): Promise<{ happenDay: string; idInPlan: number; name: string }> {
+  const happenDay = toApiDate(date);
+
+  const [plan, program] = await Promise.all([
+    querySchedule(auth, happenDay, happenDay),
+    getWorkoutDetail(auth, workoutId),
+  ]);
+
+  const idInPlan = Number(plan.maxIdInPlan ?? 0) + 1;
+
+  // The web client zeroes these out; the server recomputes them from the
+  // athlete's current threshold pace. Sending our own values is pointless.
+  const exercises = (program.exercises as Record<string, unknown>[] | undefined)?.map(
+    (e) => ({ ...e, intensityPercent: 0, intensityPercentExtend: 0 })
+  );
+
+  const body = {
+    entities: [{ happenDay, idInPlan, sortNoInSchedule }],
+    programs: [{ ...program, ...(exercises ? { exercises } : {}), idInPlan }],
+    versionObjects: [{ id: idInPlan, status: 1 }],
+    pbVersion: program.pbVersion ?? 2,
+  };
+
+  await apiPost(auth, "/training/schedule/update", body);
+
+  return { happenDay, idInPlan, name: String(program.name ?? workoutId) };
 }

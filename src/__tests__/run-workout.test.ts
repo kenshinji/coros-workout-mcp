@@ -116,21 +116,13 @@ describe("buildRunExercises", () => {
     expect(seg.intensityValueExtend).toBe(290000);
   });
 
-  it("derives the threshold percentages the API stores, crossed against the values", () => {
-    // Values verified against the real workout: warmup 68000-74000,
-    // work 97000-103000, recovery 64000-68000, cooldown 64000-74000.
-    expect([ex[0].intensityPercent, ex[0].intensityPercentExtend]).toEqual([
-      68000, 74000,
-    ]);
-    expect([ex[2].intensityPercent, ex[2].intensityPercentExtend]).toEqual([
-      97000, 103000,
-    ]);
-    expect([ex[3].intensityPercent, ex[3].intensityPercentExtend]).toEqual([
-      64000, 68000,
-    ]);
-    expect([ex[4].intensityPercent, ex[4].intensityPercentExtend]).toEqual([
-      64000, 74000,
-    ]);
+  it("leaves the threshold percentages at 0 for the server to derive", () => {
+    // The official web client sends 0 here and the server recomputes both from
+    // the athlete's current threshold pace, overwriting whatever we send.
+    for (const e of ex) {
+      expect(e.intensityPercent).toBe(0);
+      expect(e.intensityPercentExtend).toBe(0);
+    }
   });
 
   it("tags everything as running", () => {

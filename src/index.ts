@@ -16,6 +16,9 @@ import {
   buildCatalogFromRaw,
   calculateRunWorkout,
   addRunWorkout,
+  scheduleWorkout,
+  querySchedule,
+  toApiDate,
 } from "./coros-api.js";
 import { buildRunExercises, describeStep } from "./run-workout.js";
 import {
@@ -452,6 +455,112 @@ server.tool(
           {
             type: "text" as const,
             text: `Failed to create run workout: ${error instanceof Error ? error.message : String(error)}`,
+          },
+        ],
+        isError: true,
+      };
+    }
+  }
+);
+
+// --- Tool: schedule_workout ---
+server.tool(
+  "schedule_workout",
+  "Put an existing COROS workout on a calendar date, so it appears on that day in Training Hub and on the watch. Use list_workouts to find the workout id. Scheduling one day does not affect other days.",
+  {
+    workoutId: z.string().describe("Workout id from list_workouts (e.g. '480173655201071505')"),
+    date: z.string().describe("Date to schedule it on, YYYY-MM-DD (e.g. '2026-09-08')"),
+    sortNoInSchedule: z
+      .number()
+      .min(1)
+      .default(1)
+      .describe("Order within that day when scheduling more than one workout"),
+  },
+  async ({ workoutId, date, sortNoInSchedule }) => {
+    try {
+      const auth = await getValidAuth();
+      if (!auth) {
+        return {
+          content: [{ type: "text" as const, text: "Not authenticated. Use authenticate_coros first." }],
+          isError: true,
+        };
+      }
+      const res = await scheduleWorkout(auth, workoutId, date, sortNoInSchedule);
+      const d = res.happenDay;
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: `Scheduled "${res.name}" on ${d.slice(0, 4)}-${d.slice(4, 6)}-${d.slice(6)}. It will sync to your COROS watch.`,
+          },
+        ],
+      };
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: `Failed to schedule workout: ${error instanceof Error ? error.message : String(error)}`,
+          },
+        ],
+        isError: true,
+      };
+    }
+  }
+);
+
+// --- Tool: list_scheduled_workouts ---
+server.tool(
+  "list_scheduled_workouts",
+  "List workouts scheduled on the COROS calendar between two dates.",
+  {
+    startDate: z.string().describe("Start of the range, YYYY-MM-DD"),
+    endDate: z.string().describe("End of the range, YYYY-MM-DD"),
+  },
+  async ({ startDate, endDate }) => {
+    try {
+      const auth = await getValidAuth();
+      if (!auth) {
+        return {
+          content: [{ type: "text" as const, text: "Not authenticated. Use authenticate_coros first." }],
+          isError: true,
+        };
+      }
+      const plan = await querySchedule(auth, startDate, endDate);
+      const byId = new Map(
+        (plan.programs ?? []).map((p) => [String(p.idInPlan), p])
+      );
+      const from = Number(toApiDate(startDate));
+      const to = Number(toApiDate(endDate));
+      const rows = (plan.entities ?? [])
+        .filter((e) => Number(e.happenDay) >= from && Number(e.happenDay) <= to)
+        .sort((a, b) => Number(a.happenDay) - Number(b.happenDay))
+        .map((e) => {
+          const p = byId.get(String(e.idInPlan));
+          const d = String(e.happenDay);
+          const when = `${d.slice(0, 4)}-${d.slice(4, 6)}-${d.slice(6)}`;
+          if (!p) return `  ${when}: (workout ${e.idInPlan} not in response)`;
+          const km = p.estimatedDistance ? ` | ${(p.estimatedDistance / 100000).toFixed(2)} km` : "";
+          const mins = p.estimatedTime ? ` | ~${Math.round(p.estimatedTime / 60)} min` : "";
+          return `  ${when}: ${p.name} (id ${p.id})${km}${mins}`;
+        });
+
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: rows.length
+              ? `Scheduled workouts ${startDate} to ${endDate}:\n${rows.join("\n")}`
+              : `No workouts scheduled between ${startDate} and ${endDate}.`,
+          },
+        ],
+      };
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: `Failed to list scheduled workouts: ${error instanceof Error ? error.message : String(error)}`,
           },
         ],
         isError: true,

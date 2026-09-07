@@ -318,13 +318,6 @@ export const RUN_SOURCE_ID = "425706707117850624";
 export const RUN_SOURCE_URL =
   "https://oss.coros.com/source/source_default/0/1a324590d7d14f118b2ba527a4d1bb8c.jpg";
 
-/**
- * Threshold pace in seconds per km, used to derive the intensityPercent
- * fields the web UI displays. Purely cosmetic — the watch follows
- * intensityValue (the absolute pace range).
- */
-export const DEFAULT_THRESHOLD_PACE_SEC = 287.5;
-
 export interface RunSegmentStep {
   type: RunSegmentKind;
   /** Distance target in metres. Mutually exclusive with durationSec. */
@@ -453,4 +446,40 @@ export interface RunCalculateResult {
   distanceCm: number;
   totalSets: number;
   trainingLoad: number;
+}
+
+// --- Schedule ---
+
+export interface ScheduleEntity {
+  happenDay: number | string;
+  idInPlan: string | number;
+  sortNoInSchedule: number;
+  id?: string;
+}
+
+export interface SchedulePlanProgram {
+  idInPlan: string | number;
+  id: string;
+  name: string;
+  sportType: number;
+  estimatedTime?: number;
+  estimatedDistance?: number;
+  estimatedValue?: number;
+}
+
+/**
+ * The whole schedule is one plan document. `entities` are the dated slots,
+ * `programs` the workouts they reference, joined by `idInPlan`.
+ * `maxIdInPlan` is the counter a new slot must increment.
+ */
+export interface SchedulePlan {
+  id: string;
+  maxIdInPlan: string | number;
+  maxPlanProgramId?: string | number;
+  pbVersion?: number;
+  version?: number;
+  startDay?: number;
+  endDay?: number;
+  entities?: ScheduleEntity[];
+  programs?: SchedulePlanProgram[];
 }
