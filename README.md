@@ -182,7 +182,14 @@ The bundled exercise catalog (`data/exercises.json`) is a static snapshot. If CO
 ## Auth notes
 
 - **Region**: `eu` (Europe) or `us` (US). Defaults to `eu`.
-- **Session conflict**: Logging in via this API invalidates your COROS web app session, and vice versa.
+- **Credentials** come from `COROS_EMAIL` / `COROS_PASSWORD` / `COROS_REGION`, read from
+  the environment or from a `.env` file at the project root. Real environment variables
+  win, so an MCP host's `env` block overrides the file. `.env` is gitignored — keep it
+  mode 0600.
+- **Session conflict**: Logging in via this API invalidates your COROS web app session,
+  and vice versa. When the stored token is rejected, the server logs in again from those
+  credentials and retries automatically, so a web login only costs one extra round-trip.
+  Without credentials configured you'll need to call `authenticate_coros` again by hand.
 - Auth tokens are stored at `~/.config/coros-workout-mcp/auth.json` (mode 0600).
 
 ## Development

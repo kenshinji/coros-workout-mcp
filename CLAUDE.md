@@ -39,7 +39,9 @@ User provides exercise names + overrides → `findByName()` validates against ca
 - All exercises use numeric IDs internally (muscle, part, equipment, targetType, intensityType). The enum maps in `types.ts` handle code↔name translation.
 - `targetType`: 2=duration (seconds), 3=reps. `intensityType`: 0=none, 1=weight (in grams internally, kg in user-facing API).
 - Exercise names in `create_workout` must match `data/exercises.json` exactly (case-insensitive). The `search_exercises` tool helps users find correct names.
-- API auth requires `accesstoken` header + `yfheader` JSON with `userId`. Logging in via API invalidates the COROS web app session.
+- API auth requires `accesstoken` header + `yfheader` JSON with `userId`. Logging in via API invalidates the COROS web app session, and vice versa.
+- `loadDotEnv()` (called at startup in `index.ts`) reads `.env` from the project root without a dependency; already-set env vars take precedence. Credentials are never required at build time.
+- `apiGet`/`apiPost` retry once on result `1019` (invalid token) after re-logging in from env credentials, patching the caller's `AuthData` in place. `getValidAuth()` returns the stored token without validating it — the retry is what recovers from an invalidated session.
 - Base URLs: `teameuapi.coros.com` (EU), `teamapi.coros.com` (US). Region defaults to `eu`.
 - `sportType: 4` = Strength Training, `sportType: 1` = Run.
 

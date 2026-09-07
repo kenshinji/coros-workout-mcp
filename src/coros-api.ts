@@ -23,6 +23,43 @@ import {
 } from "./types.js";
 import { findByName } from "./exercise-catalog.js";
 
+/**
+ * Load KEY=VALUE pairs from a .env file next to package.json, without adding a
+ * dependency. Real environment variables win, so an MCP host's `env` block
+ * still overrides the file.
+ */
+export function loadDotEnv(startDir: string = new URL(".", import.meta.url).pathname): void {
+  let dir = resolve(startDir);
+  for (let i = 0; i < 5; i++) {
+    const candidate = resolve(dir, ".env");
+    let text: string;
+    try {
+      text = readFileSync(candidate, "utf-8");
+    } catch {
+      const parent = resolve(dir, "..");
+      if (parent === dir) break;
+      dir = parent;
+      continue;
+    }
+    for (const line of text.split("\n")) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith("#")) continue;
+      const eq = trimmed.indexOf("=");
+      if (eq === -1) continue;
+      const key = trimmed.slice(0, eq).trim();
+      let value = trimmed.slice(eq + 1).trim();
+      if (
+        (value.startsWith('"') && value.endsWith('"')) ||
+        (value.startsWith("'") && value.endsWith("'"))
+      ) {
+        value = value.slice(1, -1);
+      }
+      if (key && process.env[key] === undefined) process.env[key] = value;
+    }
+    return;
+  }
+}
+
 const CONFIG_DIR = resolve(homedir(), ".config", "coros-workout-mcp");
 const AUTH_FILE = resolve(CONFIG_DIR, "auth.json");
 const DEFAULT_SOURCE_URL =
@@ -77,22 +114,40 @@ export async function login(
   return auth;
 }
 
-/** Get valid auth from stored file or env vars */
-export async function getValidAuth(): Promise<AuthData | null> {
-  // Try stored auth first
-  const stored = loadAuth();
-  if (stored) return stored;
-
-  // Try env vars
+function envCredentials(): { email: string; password: string; region: Region } | null {
   const email = process.env.COROS_EMAIL;
   const password = process.env.COROS_PASSWORD;
   const region = (process.env.COROS_REGION as Region) || "eu";
-  if (email && password) {
-    return login(email, password, region);
-  }
-
-  return null;
+  return email && password ? { email, password, region } : null;
 }
+
+/** Get auth from the stored file, falling back to env credentials. */
+export async function getValidAuth(): Promise<AuthData | null> {
+  const stored = loadAuth();
+  if (stored) return stored;
+
+  const creds = envCredentials();
+  return creds ? login(creds.email, creds.password, creds.region) : null;
+}
+
+/**
+ * The stored token can be invalidated out from under us — notably by logging
+ * into the COROS web app, which ends the API session. When that happens and we
+ * have env credentials, log in again and patch the caller's auth object in
+ * place so the retry and any later calls use the fresh token.
+ */
+async function refreshExpiredAuth(auth: AuthData): Promise<boolean> {
+  const creds = envCredentials();
+  if (!creds) return false;
+  const fresh = await login(creds.email, creds.password, creds.region);
+  auth.accessToken = fresh.accessToken;
+  auth.userId = fresh.userId;
+  auth.region = fresh.region;
+  return true;
+}
+
+/** COROS result code for an invalid/expired access token. */
+const TOKEN_INVALID = "1019";
 
 // --- API helpers ---
 
@@ -105,13 +160,19 @@ function apiHeaders(auth: AuthData): Record<string, string> {
 }
 
 async function apiPost(auth: AuthData, path: string, body: unknown): Promise<unknown> {
-  const apiUrl = REGION_URLS[auth.region];
-  const res = await fetch(`${apiUrl}${path}`, {
-    method: "POST",
-    headers: apiHeaders(auth),
-    body: JSON.stringify(body),
-  });
-  const data = await res.json();
+  const send = async () => {
+    const res = await fetch(`${REGION_URLS[auth.region]}${path}`, {
+      method: "POST",
+      headers: apiHeaders(auth),
+      body: JSON.stringify(body),
+    });
+    return res.json();
+  };
+
+  let data = await send();
+  if (data.result === TOKEN_INVALID && (await refreshExpiredAuth(auth))) {
+    data = await send();
+  }
   if (data.result !== "0000") {
     throw new Error(`COROS API error (${path}): ${data.message || data.result}`);
   }
@@ -123,16 +184,22 @@ async function apiGet(
   path: string,
   params: Record<string, string | number> = {}
 ): Promise<unknown> {
-  const apiUrl = REGION_URLS[auth.region];
-  const url = new URL(`${apiUrl}${path}`);
-  for (const [key, value] of Object.entries(params)) {
-    url.searchParams.set(key, String(value));
+  const send = async () => {
+    const url = new URL(`${REGION_URLS[auth.region]}${path}`);
+    for (const [key, value] of Object.entries(params)) {
+      url.searchParams.set(key, String(value));
+    }
+    const res = await fetch(url.toString(), {
+      method: "GET",
+      headers: apiHeaders(auth),
+    });
+    return res.json();
+  };
+
+  let data = await send();
+  if (data.result === TOKEN_INVALID && (await refreshExpiredAuth(auth))) {
+    data = await send();
   }
-  const res = await fetch(url.toString(), {
-    method: "GET",
-    headers: apiHeaders(auth),
-  });
-  const data = await res.json();
   if (data.result !== "0000") {
     throw new Error(`COROS API error (${path}): ${data.message || data.result}`);
   }

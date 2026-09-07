@@ -5,6 +5,7 @@ import { z } from "zod";
 import { writeFileSync } from "node:fs";
 import {
   login,
+  loadDotEnv,
   getValidAuth,
   loadAuth,
   resolveExercises,
@@ -29,6 +30,10 @@ import {
   getCatalogPath,
 } from "./exercise-catalog.js";
 import type { Region, RunStep } from "./types.js";
+
+// Pick up COROS_EMAIL / COROS_PASSWORD / COROS_REGION from a .env file at the
+// project root. Must run before any tool reads process.env.
+loadDotEnv();
 
 const server = new McpServer({
   name: "coros-workout",
