@@ -473,7 +473,7 @@ server.tool(
   "schedule_workout",
   "Put an existing COROS workout on a calendar date, so it appears on that day in Training Hub and on the watch. Use list_workouts to find the workout id. Scheduling one day does not affect other days.",
   {
-    workoutId: z.string().describe("Workout id from list_workouts (e.g. '480173655201071505')"),
+    workoutId: z.string().describe("Workout id from list_workouts (e.g. '1234567890123456789')"),
     date: z.string().describe("Date to schedule it on, YYYY-MM-DD (e.g. '2026-09-08')"),
     sortNoInSchedule: z
       .number()

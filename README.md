@@ -110,7 +110,7 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
 >
 > "Read tomorrow's run from my calendar and create the matching COROS workout"
 >
-> "Schedule workout 480173655201071505 on 2026-09-08"
+> "Schedule workout 1234567890123456789 on 2026-09-08"
 >
 > "What have I got scheduled next week?"
 
@@ -168,7 +168,7 @@ Creating a workout puts it in your library. `schedule_workout` additionally pins
 to a date so it shows up on that day in Training Hub and syncs to the watch:
 
 ```
-schedule_workout(workoutId: "480173655201071505", date: "2026-09-08")
+schedule_workout(workoutId: "1234567890123456789", date: "2026-09-08")
 ```
 
 Scheduling one day leaves the rest of the plan untouched. To move a workout, schedule

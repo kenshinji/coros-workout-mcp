@@ -9,7 +9,7 @@ import {
 } from "../run-workout.js";
 import type { RunStep } from "../types.js";
 
-const USER_ID = "469084832664666112";
+const USER_ID = "1234567890123456789";
 
 /**
  * Mirrors the "5x800间歇跑" workout read back from the COROS API, which is the
