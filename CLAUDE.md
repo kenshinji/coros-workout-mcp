@@ -20,14 +20,18 @@ To run a single test file: `npx vitest run src/__tests__/exercise-catalog.test.t
 
 ## Architecture
 
-**4 source files, clear separation:**
+**5 source files, clear separation:**
 
-- `index.ts` — MCP server setup. Registers 6 tools (`authenticate_coros`, `check_coros_auth`, `search_exercises`, `create_workout`, `update_exercises`, `list_workouts`) using `@modelcontextprotocol/sdk`. STDIO transport only.
+- `index.ts` — MCP server setup. Registers 7 tools (`authenticate_coros`, `check_coros_auth`, `search_exercises`, `create_workout`, `create_run_workout`, `update_exercises`, `list_workouts`) using `@modelcontextprotocol/sdk`. STDIO transport only.
 - `coros-api.ts` — COROS API client + payload construction. Handles auth (MD5 password hashing, token storage at `~/.config/coros-workout-mcp/auth.json`), and the workout creation flow: `resolveExercises()` → `calculateWorkout()` (POST `/training/program/calculate`) → `addWorkout()` (POST `/training/program/add`). Also contains `buildCatalogFromRaw()` for the `update_exercises` tool.
 - `exercise-catalog.ts` — In-memory exercise search engine. Loads `data/exercises.json` lazily, provides `findByName()` (exact, case-insensitive), `searchExercises()` (fuzzy name + muscle/bodyPart/equipment filters). The catalog is the single source of truth for exercise names used in `create_workout`.
+- `run-workout.ts` — Running workouts (`sportType: 1`). Builds the segment array from a `RunStep[]` tree (`buildRunExercises()`) and the workout envelope (`buildRunWorkoutPayload()`). Running has no exercise catalog — every segment is one of four fixed COROS templates in `RUN_SEGMENT_TEMPLATES`.
 - `types.ts` — All interfaces and enum maps. Numeric code → human-readable name mappings for muscles, body parts, equipment. Key types: `CatalogExercise` (bundled catalog), `ExercisePayload` (API payload), `ExerciseOverrides` (user input), `RawExercise` (API response).
 
-**Data flow for workout creation:**
+**Data flow for run workout creation:**
+User provides steps (warmup/work/recovery/cooldown, plus `repeat` groups) → `buildRunExercises()` flattens the tree and encodes targets/paces → POST to `/calculate` (returns `plan*` fields, server expands repeats) → POST to `/add` to save.
+
+**Data flow for strength workout creation:**
 User provides exercise names + overrides → `findByName()` validates against catalog → `buildExercisePayload()` merges catalog defaults with overrides → `buildWorkoutPayload()` wraps exercises → POST to `/calculate` for metrics → POST to `/add` to save.
 
 ## Key Conventions
@@ -37,7 +41,19 @@ User provides exercise names + overrides → `findByName()` validates against ca
 - Exercise names in `create_workout` must match `data/exercises.json` exactly (case-insensitive). The `search_exercises` tool helps users find correct names.
 - API auth requires `accesstoken` header + `yfheader` JSON with `userId`. Logging in via API invalidates the COROS web app session.
 - Base URLs: `teameuapi.coros.com` (EU), `teamapi.coros.com` (US). Region defaults to `eu`.
-- `sportType: 4` = Strength Training throughout the codebase.
+- `sportType: 4` = Strength Training, `sportType: 1` = Run.
+
+## Running Workout Encoding
+
+Derived from workouts created in the COROS web app and read back via `/training/program/query`; verified by round-trip in `src/__tests__/run-workout.test.ts`.
+
+- `exerciseType`: 1=warm-up, 2=work, 3=cool-down, 4=recovery, 0=repeat group (`isGroup: true`, `sets` = repeat count, children carry its `id` as `groupId`).
+- `sortNo`: `topIndex << 24`, with repeat children OR-ing in `childIndex << 16`. Both indices are 1-based.
+- `targetType`: 5=distance (`targetValue` in **centimetres**), 2=duration (seconds). `targetDisplayUnit`: 1=km, 2=m, 0=time.
+- `intensityType: 3` = pace range. `intensityValue`/`intensityValueExtend` are sec/km × 1000, **fastest first**.
+- `intensityPercent`/`intensityPercentExtend` are percent-of-threshold-pace × 1000, paired **crossed** against the values (the slower pace carries the lower percent). Display-only — the watch follows `intensityValue`. Computed from `DEFAULT_THRESHOLD_PACE_SEC`.
+- `/calculate` returns `planDuration`, `planDistance`, `planSets`, `planTrainingLoad` for running (not the flat shape the strength endpoint returns).
+- Nested repeats are not supported by the API.
 
 ## Exercise Catalog
 

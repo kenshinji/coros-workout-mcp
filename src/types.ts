@@ -276,3 +276,181 @@ export const REGION_URLS = {
 } as const;
 
 export type Region = keyof typeof REGION_URLS;
+
+// --- Running workouts (sportType 1) ---
+
+/**
+ * The four fixed COROS segment templates for running. Unlike strength
+ * exercises these are not searchable; the ids are stable API constants
+ * captured from workouts created in the COROS web app.
+ */
+export const RUN_SEGMENT_TEMPLATES = {
+  warmup: {
+    exerciseType: 1,
+    name: "T1120",
+    originId: "425895398452936705",
+    overview: "sid_run_warm_up_dist",
+  },
+  work: {
+    exerciseType: 2,
+    name: "T3001",
+    originId: "426109589008859136",
+    overview: "sid_run_training",
+  },
+  recovery: {
+    exerciseType: 4,
+    name: "T1123",
+    originId: "425895332954685440",
+    overview: "sid_run_cool_down_dist",
+  },
+  cooldown: {
+    exerciseType: 3,
+    name: "T1122",
+    originId: "425895456971866112",
+    overview: "",
+  },
+} as const;
+
+export type RunSegmentKind = keyof typeof RUN_SEGMENT_TEMPLATES;
+
+export const RUN_GROUP_NAME = "训练";
+export const RUN_SOURCE_ID = "425706707117850624";
+export const RUN_SOURCE_URL =
+  "https://oss.coros.com/source/source_default/0/1a324590d7d14f118b2ba527a4d1bb8c.jpg";
+
+/**
+ * Threshold pace in seconds per km, used to derive the intensityPercent
+ * fields the web UI displays. Purely cosmetic — the watch follows
+ * intensityValue (the absolute pace range).
+ */
+export const DEFAULT_THRESHOLD_PACE_SEC = 287.5;
+
+export interface RunSegmentStep {
+  type: RunSegmentKind;
+  /** Distance target in metres. Mutually exclusive with durationSec. */
+  distanceM?: number;
+  /** Duration target in seconds. Mutually exclusive with distanceM. */
+  durationSec?: number;
+  /** Pace range bounds as "mm:ss" per km; order does not matter. */
+  paceFrom?: string;
+  paceTo?: string;
+}
+
+export interface RunRepeatStep {
+  type: "repeat";
+  times: number;
+  steps: RunSegmentStep[];
+}
+
+export type RunStep = RunSegmentStep | RunRepeatStep;
+
+export interface RunExercisePayload {
+  access: number;
+  animationId: number;
+  createTimestamp: number;
+  defaultOrder: number;
+  equipment?: number[];
+  exerciseKind: number;
+  exerciseType: number;
+  gradeSystem: number;
+  groupId: string;
+  hrType: number;
+  id: string;
+  intensityCustom: number;
+  intensityDisplayUnit: number;
+  intensityMultiplier: number;
+  intensityPercent: number;
+  intensityPercentExtend: number;
+  intensityType: number;
+  intensityValue: number;
+  intensityValueExtend: number;
+  isDefaultAdd: number;
+  isGroup: boolean;
+  isIntensityPercent: boolean;
+  name: string;
+  onsightGradeOffset: number;
+  originId: string;
+  overview: string;
+  packageTime: number;
+  part?: number[];
+  restType: number;
+  restValue: number;
+  sets: number;
+  sortNo: number;
+  sourceId: string;
+  sourceUrl: string;
+  sportType: number;
+  status: number;
+  subType: number;
+  targetDisplayUnit: number;
+  targetType: number;
+  targetValue: number;
+  userId: number;
+  videoInfos: unknown[];
+  videoUrl: string;
+}
+
+export interface RunWorkoutPayload {
+  access: number;
+  authorId: string;
+  createTimestamp: number;
+  distance: number | string;
+  distanceDisplayUnit: number;
+  duration: number;
+  elevGain: number;
+  essence: number;
+  estimatedType: number;
+  estimatedValue: number;
+  exerciseNum: number;
+  exercises: RunExercisePayload[];
+  gradeSystemVersion: number;
+  headPic: string;
+  hybridTotalSets: number;
+  id: string;
+  idInPlan: string;
+  isTargetTypeConsistent: number;
+  name: string;
+  nickname: string;
+  originEssence: number;
+  overview: string;
+  pbVersion: number;
+  pitch: number;
+  planIdIndex: number;
+  poolLength: number;
+  poolLengthId: number;
+  poolLengthUnit: number;
+  referExercise: {
+    gradeSystem: number;
+    hrType: number;
+    intensityType: number;
+    valueType: number;
+  };
+  sex: number;
+  shareUrl: string;
+  simple: boolean;
+  sourceId: string;
+  sourceUrl: string;
+  sportType: number;
+  star: number;
+  status: number;
+  subType: number;
+  targetType: number;
+  targetValue: number;
+  thirdPartyId: number;
+  totalSets: number;
+  trainingLoad: number;
+  type: number;
+  unit: number;
+  userId: string;
+  version: number;
+  videoCoverUrl: string;
+  videoUrl: string;
+  sets?: number;
+}
+
+export interface RunCalculateResult {
+  duration: number;
+  distanceCm: number;
+  totalSets: number;
+  trainingLoad: number;
+}

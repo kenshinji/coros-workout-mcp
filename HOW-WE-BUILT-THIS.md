@@ -99,13 +99,50 @@ This was motivated by the discovery that only ~100 of the 383 exercises had i18n
 - YouTube walkthrough link added to README — we recorded a demo video
 - `CLAUDE.md` added — making the project self-documenting for future Claude Code sessions
 
+## Phase 10: Running Workouts (~Sep 7, 2026)
+
+The trigger was a real need: a marathon training plan lived in Google Calendar, but the
+server could only create strength workouts. The ask was "read tomorrow's run from my
+calendar and build the COROS workout."
+
+The interesting part was the reverse-engineering method. Phase 2 had used DevTools
+captures — create a workout in the web app, grab the request. This time the web session
+was already dead (API login had invalidated it, exactly as documented), and the fix
+would have cost a round-trip: log in via browser, capture, then re-authenticate the API.
+
+Instead: `POST /training/program/query` with `sportType: 1` returned ten running
+workouts the user had built by hand months earlier — already-saved data, in the exact
+shape the API expects to receive. Reading existing records beat capturing new ones.
+No browser, no session churn, and ten reference samples rather than one.
+
+Decoding took three workouts side by side (`5x800间歇跑`, `6x400 Intervals`,
+`Lite Fartlek`) to separate the constants from the variables:
+
+- `sortNo` looked arbitrary until the values factored cleanly: `topIndex << 24`, with
+  repeat children OR-ing in `childIndex << 16`
+- Distances are in **centimetres**; `targetDisplayUnit` only affects rendering
+- `intensityPercent` is paired **crossed** against `intensityValue` — the slower pace
+  carries the lower percent, because the percent measures speed-vs-threshold, not pace.
+  Solving for the threshold across all three workouts converged on ~287.5 s/km, which
+  then reproduced every observed percent to the unit. That agreement is what confirmed
+  the decoding was right rather than merely plausible.
+
+Unlike strength, running has no exercise catalog — every segment is one of four fixed
+templates (warm-up / work / recovery / cool-down), so `create_run_workout` takes a step
+tree instead of exercise names. The tests assert against the real values read back from
+the API, so they'd catch a COROS-side encoding change.
+
+Known gap, documented rather than papered over: workouts land in the library but can't
+be scheduled to a date. `/training/schedule/query` exists but rejected five guessed
+parameter shapes; that one still needs a real capture.
+
 ---
 
 ## The Pairing Dynamic
 
 The project was a textbook example of human-AI pairing where each party played to their strengths:
 
-- **Human** did the reverse engineering: DevTools network captures, extracting the i18n JS bundle, manually creating test workouts to capture payloads, UAT testing against the real API, recording the YouTube demo
+- **Human** did the reverse engineering: DevTools network captures, extracting the i18n JS bundle, manually creating test workouts to capture payloads, UAT testing against the real API, recording the YouTube demo. In Phase 10 this inverted — the hand-built workouts from months earlier became the corpus Claude decoded, so the human's past manual work paid off without any new capture session
 - **Claude Code** handled the implementation heavy lifting: writing the TypeScript server, constructing the complex 40-field API payloads, building the search engine, writing tests, and iterating on bugs found during testing
 - **Design decisions were collaborative**: the plan shows shared reasoning about architecture choices, referencing prior art (Garmin MCP, coros-connect) and community demand
 

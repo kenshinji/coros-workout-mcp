@@ -14,7 +14,10 @@ import {
   queryExerciseCatalog,
   fetchI18nStrings,
   buildCatalogFromRaw,
+  calculateRunWorkout,
+  addRunWorkout,
 } from "./coros-api.js";
+import { buildRunExercises, describeStep } from "./run-workout.js";
 import {
   searchExercises,
   findByName,
@@ -22,7 +25,7 @@ import {
   reloadCatalog,
   getCatalogPath,
 } from "./exercise-catalog.js";
-import type { Region } from "./types.js";
+import type { Region, RunStep } from "./types.js";
 
 const server = new McpServer({
   name: "coros-workout",
@@ -362,6 +365,93 @@ server.tool(
           {
             type: "text" as const,
             text: `Failed to update exercises: ${error instanceof Error ? error.message : String(error)}`,
+          },
+        ],
+        isError: true,
+      };
+    }
+  }
+);
+
+// --- Tool: create_run_workout ---
+
+const RunSegmentSchema = z.object({
+  type: z
+    .enum(["warmup", "work", "recovery", "cooldown"])
+    .describe("Segment role: warmup, work (the hard part), recovery (between reps), cooldown"),
+  distanceM: z
+    .number()
+    .min(1)
+    .optional()
+    .describe("Distance target in metres (e.g. 800). Use this OR durationSec, not both."),
+  durationSec: z
+    .number()
+    .min(1)
+    .optional()
+    .describe("Duration target in seconds (e.g. 150). Use this OR distanceM, not both."),
+  paceFrom: z.string().describe('Fast end of the pace range, mm:ss per km (e.g. "4:35")'),
+  paceTo: z.string().describe('Slow end of the pace range, mm:ss per km (e.g. "4:50")'),
+});
+
+const RunStepSchema = z.union([
+  RunSegmentSchema,
+  z.object({
+    type: z.literal("repeat"),
+    times: z.number().min(1).max(50).describe("How many times to repeat the child steps"),
+    steps: z.array(RunSegmentSchema).min(1).describe("Steps inside the repeat (e.g. work + recovery)"),
+  }),
+]);
+
+server.tool(
+  "create_run_workout",
+  "Create a structured running workout (intervals, tempo, fartlek, easy run) on COROS Training Hub. Steps are warmup/work/recovery/cooldown segments, each with a distance or duration target and a pace range; wrap steps in a 'repeat' step for intervals. The workout syncs to the user's COROS watch.",
+  {
+    name: z.string().describe("Workout name (e.g. 'Intervals 5x800m')"),
+    overview: z.string().default("").describe("Workout description"),
+    steps: z.array(RunStepSchema).min(1).describe("Ordered list of workout steps"),
+  },
+  async ({ name, overview, steps }) => {
+    try {
+      const auth = await getValidAuth();
+      if (!auth) {
+        return {
+          content: [
+            { type: "text" as const, text: "Not authenticated. Use authenticate_coros first." },
+          ],
+          isError: true,
+        };
+      }
+
+      const exercises = buildRunExercises(steps as RunStep[], auth.userId);
+      const calculated = await calculateRunWorkout(auth, name, overview, exercises);
+      await addRunWorkout(auth, name, overview, exercises, calculated);
+
+      const km = (calculated.distanceCm / 100000).toFixed(2);
+      const mins = Math.floor(calculated.duration / 60);
+      const secs = calculated.duration % 60;
+
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: [
+              `Run workout "${name}" created successfully!`,
+              `Distance: ~${km} km | Duration: ~${mins}:${String(secs).padStart(2, "0")} | Segments: ${calculated.totalSets} | Training load: ${calculated.trainingLoad}`,
+              ``,
+              `Structure:`,
+              ...(steps as RunStep[]).map((s) => `  ${describeStep(s)}`),
+              ``,
+              `The workout will sync to your COROS watch.`,
+            ].join("\n"),
+          },
+        ],
+      };
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: `Failed to create run workout: ${error instanceof Error ? error.message : String(error)}`,
           },
         ],
         isError: true,

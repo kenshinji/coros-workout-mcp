@@ -6,7 +6,7 @@
 > supported, first-party option, use that. This project remains an independent,
 > community-built tool.
 
-MCP server for creating COROS strength workouts via the Training Hub API. Lets Claude design workouts and push them directly to your COROS watch.
+MCP server for creating COROS **strength and running** workouts via the Training Hub API. Lets Claude design workouts and push them directly to your COROS watch.
 
 See the MCP in action: [YouTube walkthrough](https://www.youtube.com/watch?v=I2I2p7hNZjM)
 
@@ -73,6 +73,18 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
 > - **fnm**: `~/.local/share/fnm/node-versions/<version>/installation/bin/node`
 > - **Homebrew**: `/opt/homebrew/bin/node`
 
+## What's supported
+
+| Capability | Status |
+|------------|--------|
+| Strength workouts (`sportType 4`) | ✅ Full exercise catalog (~383 exercises), sets/reps/duration/weight/rest |
+| Running workouts (`sportType 1`) | ✅ Warm-up, work, recovery, cool-down segments; distance or duration targets; pace ranges; repeat groups |
+| Listing existing workouts | ✅ |
+| Refreshing the exercise catalog | ✅ |
+| **Scheduling a workout to a date** | ❌ Workouts land in your library; you pick them on the watch manually. The `/training/schedule/*` endpoint exists but its parameters are not yet reverse-engineered |
+| **Multi-week training plans** | ❌ `/training/plan/query` responds, but no create/write support |
+| Cycling / swimming workouts | ❌ Encodings not verified |
+
 ## Tools
 
 | Tool | Description |
@@ -81,6 +93,7 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
 | `check_coros_auth` | Verify current auth status |
 | `search_exercises` | Search ~383 exercises by name, muscle, body part, equipment |
 | `create_workout` | Build and push a strength workout to COROS |
+| `create_run_workout` | Build and push a structured running workout (intervals, tempo, fartlek, easy) |
 | `update_exercises` | Fetch the latest exercise catalog from COROS and rebuild locally |
 | `list_workouts` | List existing workouts |
 
@@ -89,6 +102,58 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
 > "Search for chest exercises with bodyweight"
 >
 > "Create a workout called 'Quick Push' with 4x15 Push-ups, 3x10 Diamond Push-ups, and 3x20 Decline Push-ups with 45s rest"
+>
+> "Build me a 5x800m interval session: 2km warm-up at 6:30-7:00, 800m reps at 4:35-4:50 with 2:30 jog recovery, 2km cool-down"
+>
+> "Read tomorrow's run from my calendar and create the matching COROS workout"
+
+## Running workouts
+
+A running workout is an ordered list of **steps**. Each step is a segment with a
+target and a pace range, or a `repeat` group wrapping other steps.
+
+| Field | Meaning |
+|-------|---------|
+| `type` | `warmup`, `work`, `recovery`, `cooldown`, or `repeat` |
+| `distanceM` | Distance target in metres — use this **or** `durationSec`, not both |
+| `durationSec` | Duration target in seconds |
+| `paceFrom` / `paceTo` | Pace range bounds as `mm:ss` per km; order doesn't matter |
+| `times` | (`repeat` only) how many times to repeat its `steps` |
+
+Repeats cannot be nested — that's an API limitation, not ours.
+
+**5×800m intervals:**
+
+```json
+{
+  "name": "Intervals 5x800m",
+  "steps": [
+    { "type": "warmup", "distanceM": 2000, "paceFrom": "6:30", "paceTo": "7:00" },
+    { "type": "repeat", "times": 5, "steps": [
+        { "type": "work",     "distanceM": 800,   "paceFrom": "4:35", "paceTo": "4:50" },
+        { "type": "recovery", "durationSec": 150, "paceFrom": "7:00", "paceTo": "7:30" }
+    ]},
+    { "type": "cooldown", "distanceM": 2000, "paceFrom": "6:30", "paceTo": "7:30" }
+  ]
+}
+```
+
+**10km tempo run** — no repeat group needed:
+
+```json
+{
+  "name": "10km Tempo",
+  "steps": [
+    { "type": "warmup",   "distanceM": 2000, "paceFrom": "6:30", "paceTo": "7:00" },
+    { "type": "work",     "distanceM": 6000, "paceFrom": "5:20", "paceTo": "5:30" },
+    { "type": "cooldown", "distanceM": 2000, "paceFrom": "6:30", "paceTo": "7:30" }
+  ]
+}
+```
+
+You rarely need to write this by hand — describe the session in plain language and
+Claude fills it in. See the encoding notes in [CLAUDE.md](CLAUDE.md#running-workout-encoding)
+if you're working on the internals.
 
 ## Updating the exercise catalog
 

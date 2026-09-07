@@ -1,3 +1,4 @@
+import { buildRunWorkoutPayload } from "./run-workout.js";
 import { createHash } from "node:crypto";
 import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { resolve } from "node:path";
@@ -10,6 +11,8 @@ import type {
   RawExercise,
   Region,
   WorkoutPayload,
+  RunExercisePayload,
+  RunCalculateResult,
 } from "./types.js";
 import {
   REGION_URLS,
@@ -500,4 +503,50 @@ export async function queryWorkouts(
     sportType: options.sportType ?? 0,
   };
   return apiPost(auth, "/training/program/query", body);
+}
+
+// --- Running workout API (sportType 1) ---
+
+/**
+ * Calculate metrics for a running workout. The server expands repeat groups
+ * and returns plan* fields (rather than the strength endpoint's flat shape).
+ */
+export async function calculateRunWorkout(
+  auth: AuthData,
+  name: string,
+  overview: string,
+  exercises: RunExercisePayload[]
+): Promise<RunCalculateResult> {
+  const payload = buildRunWorkoutPayload(name, overview, exercises);
+  const result = (await apiPost(auth, "/training/program/calculate", payload)) as {
+    data: {
+      planDuration: number;
+      planDistance: string;
+      planSets: number;
+      planTrainingLoad: number;
+    };
+  };
+  return {
+    duration: result.data.planDuration,
+    distanceCm: Math.round(Number(result.data.planDistance)),
+    totalSets: result.data.planSets,
+    trainingLoad: result.data.planTrainingLoad,
+  };
+}
+
+export async function addRunWorkout(
+  auth: AuthData,
+  name: string,
+  overview: string,
+  exercises: RunExercisePayload[],
+  calculated: RunCalculateResult
+): Promise<unknown> {
+  const payload = buildRunWorkoutPayload(name, overview, exercises);
+  payload.duration = calculated.duration;
+  payload.totalSets = calculated.totalSets;
+  payload.sets = calculated.totalSets;
+  payload.trainingLoad = calculated.trainingLoad;
+  payload.estimatedValue = calculated.trainingLoad;
+  payload.distance = "0";
+  return apiPost(auth, "/training/program/add", payload);
 }
