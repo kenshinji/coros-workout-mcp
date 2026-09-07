@@ -73,6 +73,48 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
 > - **fnm**: `~/.local/share/fnm/node-versions/<version>/installation/bin/node`
 > - **Homebrew**: `/opt/homebrew/bin/node`
 
+## Usage with claude.ai (Cloudflare Workers)
+
+Claude on the web and on your phone can only talk to an MCP server over HTTPS, so the
+same tools also run as a Cloudflare Worker (`src/worker.ts`) that you add as a **custom
+connector**. The Worker has no filesystem, so the COROS token lives in KV and the
+exercise catalog is bundled into the script.
+
+```bash
+npx wrangler login
+npx wrangler kv namespace create COROS_KV     # paste the id into wrangler.jsonc
+npx wrangler secret put MCP_SECRET            # a long random string, e.g. `openssl rand -hex 24`
+npx wrangler secret put COROS_EMAIL
+npx wrangler secret put COROS_PASSWORD
+npx wrangler secret put COROS_REGION          # "eu" or "us"
+npm run deploy
+```
+
+Then in claude.ai → **Settings → Connectors → Add custom connector**, use:
+
+```
+https://coros-workout-mcp.<your-subdomain>.workers.dev/mcp/<MCP_SECRET>
+```
+
+The secret is what keeps your COROS account private — the endpoint has no other
+authentication, and every other path returns 404. It can also be sent as an
+`Authorization: Bearer <MCP_SECRET>` header for clients that support headers. Without
+`MCP_SECRET` set the Worker refuses to serve anything.
+
+Local development against a simulated KV:
+
+```bash
+echo 'MCP_SECRET=dev-secret' > .dev.vars   # gitignored
+npm run dev:worker
+curl -X POST http://127.0.0.1:8787/mcp/dev-secret \
+  -H 'content-type: application/json' \
+  -H 'accept: application/json, text/event-stream' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}'
+```
+
+> **Note:** the Worker is single-tenant — it holds *your* COROS credentials, and anyone
+> with the URL acts as you. Don't share it.
+
 ## What's supported
 
 | Capability | Status |
@@ -93,12 +135,12 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
 | `authenticate_coros` | Log in with email/password (or auto-login from env vars) |
 | `check_coros_auth` | Verify current auth status |
 | `search_exercises` | Search ~383 exercises by name, muscle, body part, equipment |
-| `create_workout` | Build and push a strength workout to COROS |
-| `create_run_workout` | Build and push a structured running workout (intervals, tempo, fartlek, easy) |
-| `schedule_workout` | Put a saved workout on a calendar date |
+| `create_workout` | Build and push a strength workout to COROS (returns its id) |
+| `create_run_workout` | Build and push a structured running workout (intervals, tempo, fartlek, easy; returns its id) |
+| `schedule_workout` | Put a saved workout on a calendar date, by id or by name |
 | `list_scheduled_workouts` | List workouts scheduled between two dates |
 | `update_exercises` | Fetch the latest exercise catalog from COROS and rebuild locally |
-| `list_workouts` | List existing workouts |
+| `list_workouts` | List existing workouts with their ids |
 
 ## Example conversation
 
@@ -179,6 +221,10 @@ yet.
 
 The bundled exercise catalog (`data/exercises.json`) is a static snapshot. If COROS adds new exercises, use the `update_exercises` tool to refresh it. This fetches the latest exercises from the COROS API and i18n strings from the CDN, rebuilds the catalog, and reloads the in-memory cache — all in a single tool call. Requires authentication.
 
+Locally it rewrites `data/exercises.json`; on the Worker it writes the new catalog to KV,
+which then takes precedence over the bundled copy (so a `wrangler deploy` isn't needed to
+pick up new exercises).
+
 ## Auth notes
 
 - **Region**: `eu` (Europe) or `us` (US). Defaults to `eu`.
@@ -190,12 +236,16 @@ The bundled exercise catalog (`data/exercises.json`) is a static snapshot. If CO
   and vice versa. When the stored token is rejected, the server logs in again from those
   credentials and retries automatically, so a web login only costs one extra round-trip.
   Without credentials configured you'll need to call `authenticate_coros` again by hand.
-- Auth tokens are stored at `~/.config/coros-workout-mcp/auth.json` (mode 0600).
+- Auth tokens are stored at `~/.config/coros-workout-mcp/auth.json` (mode 0600) when
+  running over stdio, and in the `COROS_KV` namespace when running as a Worker.
 
 ## Development
 
 ```bash
-npm test           # Run unit tests
-npm run test:watch # Watch mode
-npm run build      # Compile TypeScript
+npm test               # Run unit tests
+npm run test:watch     # Watch mode
+npm run build          # Compile TypeScript (stdio server → dist/)
+npm run typecheck:worker  # Type-check the Worker build (wrangler bundles it with esbuild)
+npm run dev:worker     # Run the Worker locally
+npm run deploy         # Deploy the Worker to Cloudflare
 ```

@@ -1,8 +1,5 @@
 import { buildRunWorkoutPayload } from "./run-workout.js";
 import { createHash } from "node:crypto";
-import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
-import { resolve } from "node:path";
-import { homedir } from "node:os";
 import type {
   AuthData,
   CatalogExercise,
@@ -22,46 +19,8 @@ import {
   EquipmentCode,
 } from "./types.js";
 import { findByName } from "./exercise-catalog.js";
+import { getAuthStore } from "./auth-store.js";
 
-/**
- * Load KEY=VALUE pairs from a .env file next to package.json, without adding a
- * dependency. Real environment variables win, so an MCP host's `env` block
- * still overrides the file.
- */
-export function loadDotEnv(startDir: string = new URL(".", import.meta.url).pathname): void {
-  let dir = resolve(startDir);
-  for (let i = 0; i < 5; i++) {
-    const candidate = resolve(dir, ".env");
-    let text: string;
-    try {
-      text = readFileSync(candidate, "utf-8");
-    } catch {
-      const parent = resolve(dir, "..");
-      if (parent === dir) break;
-      dir = parent;
-      continue;
-    }
-    for (const line of text.split("\n")) {
-      const trimmed = line.trim();
-      if (!trimmed || trimmed.startsWith("#")) continue;
-      const eq = trimmed.indexOf("=");
-      if (eq === -1) continue;
-      const key = trimmed.slice(0, eq).trim();
-      let value = trimmed.slice(eq + 1).trim();
-      if (
-        (value.startsWith('"') && value.endsWith('"')) ||
-        (value.startsWith("'") && value.endsWith("'"))
-      ) {
-        value = value.slice(1, -1);
-      }
-      if (key && process.env[key] === undefined) process.env[key] = value;
-    }
-    return;
-  }
-}
-
-const CONFIG_DIR = resolve(homedir(), ".config", "coros-workout-mcp");
-const AUTH_FILE = resolve(CONFIG_DIR, "auth.json");
 const DEFAULT_SOURCE_URL =
   "https://d31oxp44ddzkyk.cloudfront.net/source/source_default/0/2fbd46e17bc54bc5873415c9fa767bdc.jpg";
 
@@ -71,17 +30,23 @@ function md5(input: string): string {
   return createHash("md5").update(input).digest("hex");
 }
 
-export function storeAuth(auth: AuthData): void {
-  mkdirSync(CONFIG_DIR, { recursive: true, mode: 0o700 });
-  writeFileSync(AUTH_FILE, JSON.stringify(auth), { mode: 0o600 });
+export async function storeAuth(auth: AuthData): Promise<void> {
+  await getAuthStore().save(auth);
 }
 
-export function loadAuth(): AuthData | null {
-  try {
-    return JSON.parse(readFileSync(AUTH_FILE, "utf-8"));
-  } catch {
-    return null;
-  }
+export async function loadAuth(): Promise<AuthData | null> {
+  return getAuthStore().load();
+}
+
+/**
+ * Every COROS endpoint answers with this envelope: "0000" means success.
+ * Typed explicitly because `Response.json()` is `unknown` under the Workers
+ * type definitions.
+ */
+interface ApiResponse {
+  result: string;
+  message?: string;
+  data?: any;
 }
 
 export async function login(
@@ -99,7 +64,7 @@ export async function login(
       pwd: md5(password),
     }),
   });
-  const data = await res.json();
+  const data = (await res.json()) as ApiResponse;
   if (data.result !== "0000") {
     throw new Error(`COROS login failed: ${data.message || data.result}`);
   }
@@ -110,7 +75,7 @@ export async function login(
     region,
     timestamp: Date.now(),
   };
-  storeAuth(auth);
+  await storeAuth(auth);
   return auth;
 }
 
@@ -121,9 +86,9 @@ function envCredentials(): { email: string; password: string; region: Region } |
   return email && password ? { email, password, region } : null;
 }
 
-/** Get auth from the stored file, falling back to env credentials. */
+/** Get auth from the auth store, falling back to env credentials. */
 export async function getValidAuth(): Promise<AuthData | null> {
-  const stored = loadAuth();
+  const stored = await loadAuth();
   if (stored) return stored;
 
   const creds = envCredentials();
@@ -166,7 +131,7 @@ async function apiPost(auth: AuthData, path: string, body: unknown): Promise<unk
       headers: apiHeaders(auth),
       body: JSON.stringify(body),
     });
-    return res.json();
+    return res.json() as Promise<ApiResponse>;
   };
 
   let data = await send();
@@ -193,7 +158,7 @@ async function apiGet(
       method: "GET",
       headers: apiHeaders(auth),
     });
-    return res.json();
+    return res.json() as Promise<ApiResponse>;
   };
 
   let data = await send();
@@ -535,13 +500,76 @@ export async function calculateWorkout(
   };
 }
 
+/** One row of `/training/program/query`. */
+export interface WorkoutSummary {
+  id: string;
+  name: string;
+  overview?: string;
+  sportType: number;
+  duration?: number;
+  estimatedTime?: number;
+  estimatedDistance?: number;
+  totalSets?: number;
+  exerciseNum?: number;
+}
+
+/**
+ * Dig the new workout's id out of an `/add` response. The endpoint isn't
+ * documented and has been seen answering with the id in more than one shape,
+ * so try each and let the caller fall back to a lookup by name.
+ */
+function extractWorkoutId(response: ApiResponse): string | null {
+  const data = response?.data;
+  const candidate =
+    typeof data === "string" || typeof data === "number"
+      ? data
+      : data?.id ?? data?.programId ?? data?.programIdStr;
+  const id = candidate === undefined || candidate === null ? "" : String(candidate);
+  // Real ids are long snowflakes. The request payload carries `id: "0"`, so an
+  // echoed request would otherwise look like a successful extraction.
+  return /^\d{6,}$/.test(id) ? id : null;
+}
+
+/** Highest id wins: COROS ids are snowflakes, so the newest sorts last. */
+function newestId(workouts: WorkoutSummary[]): string | null {
+  let best: string | null = null;
+  for (const w of workouts) {
+    if (!w?.id) continue;
+    try {
+      if (best === null || BigInt(w.id) > BigInt(best)) best = w.id;
+    } catch {
+      best ??= w.id;
+    }
+  }
+  return best;
+}
+
+/**
+ * Fallback for when `/add` doesn't hand back an id: ask for workouts with this
+ * name and take the newest, which is the one just created.
+ */
+export async function findWorkoutIdByName(
+  auth: AuthData,
+  name: string,
+  sportType = 0
+): Promise<string | null> {
+  const result = (await queryWorkouts(auth, {
+    name,
+    sportType,
+    limitSize: 20,
+  })) as { data?: WorkoutSummary[] };
+  const candidates = result.data ?? [];
+  const exact = candidates.filter((w) => w.name === name);
+  return newestId(exact.length > 0 ? exact : candidates);
+}
+
 export async function addWorkout(
   auth: AuthData,
   name: string,
   overview: string,
   exercisePayloads: ExercisePayload[],
   calculated: CalculateResult
-): Promise<unknown> {
+): Promise<string | null> {
   const payload = buildWorkoutPayload(name, overview, exercisePayloads);
   // Apply calculated values
   payload.duration = calculated.duration;
@@ -549,7 +577,8 @@ export async function addWorkout(
   payload.distance = "0"; // String in add (number in calculate)
   payload.sets = calculated.totalSets;
   payload.pitch = 0;
-  return apiPost(auth, "/training/program/add", payload);
+  const response = (await apiPost(auth, "/training/program/add", payload)) as ApiResponse;
+  return extractWorkoutId(response) ?? findWorkoutIdByName(auth, name, 4);
 }
 
 export interface QueryOptions {
@@ -608,7 +637,7 @@ export async function addRunWorkout(
   overview: string,
   exercises: RunExercisePayload[],
   calculated: RunCalculateResult
-): Promise<unknown> {
+): Promise<string | null> {
   const payload = buildRunWorkoutPayload(name, overview, exercises);
   payload.duration = calculated.duration;
   payload.totalSets = calculated.totalSets;
@@ -616,7 +645,8 @@ export async function addRunWorkout(
   payload.trainingLoad = calculated.trainingLoad;
   payload.estimatedValue = calculated.trainingLoad;
   payload.distance = "0";
-  return apiPost(auth, "/training/program/add", payload);
+  const response = (await apiPost(auth, "/training/program/add", payload)) as ApiResponse;
+  return extractWorkoutId(response) ?? findWorkoutIdByName(auth, name, 1);
 }
 
 // --- Schedule API ---
