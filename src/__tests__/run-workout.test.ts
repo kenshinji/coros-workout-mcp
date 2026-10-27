@@ -151,6 +151,56 @@ describe("buildRunExercises", () => {
     ).toThrow(/paceFrom and paceTo/);
   });
 
+  it("requires one intensity target, not none and not both", () => {
+    expect(() =>
+      buildRunExercises([{ type: "work", distanceM: 800 }], USER_ID)
+    ).toThrow(/paceFrom\/paceTo.*hrFrom\/hrTo/);
+    expect(() =>
+      buildRunExercises(
+        [{ type: "work", distanceM: 800, paceFrom: "4:00", paceTo: "4:10", hrFrom: 150, hrTo: 160 }],
+        USER_ID
+      )
+    ).toThrow(/Pick one/);
+  });
+
+  it("encodes a heart-rate range as plain bpm, low first", () => {
+    const [seg] = buildRunExercises(
+      [{ type: "work", durationSec: 600, hrFrom: 160, hrTo: 150 }],
+      USER_ID
+    );
+    // intensityType 2 = heart rate, hrType 2 = what the web client normalises
+    // a plain bpm range to. No x1000 multiplier, unlike pace.
+    expect(seg.intensityType).toBe(2);
+    expect(seg.hrType).toBe(2);
+    expect(seg.intensityValue).toBe(150);
+    expect(seg.intensityValueExtend).toBe(160);
+    expect(seg.intensityMultiplier).toBe(0);
+    expect(seg.intensityCustom).toBe(0);
+    expect(seg.isIntensityPercent).toBe(false);
+    expect(seg.intensityDisplayUnit).toBe(0);
+    // Percentages stay 0: the server fills them from the athlete's HR profile.
+    expect(seg.intensityPercent).toBe(0);
+    expect(seg.intensityPercentExtend).toBe(0);
+  });
+
+  it("rejects a heart rate outside the supported range", () => {
+    expect(() =>
+      buildRunExercises([{ type: "work", durationSec: 600, hrFrom: 20, hrTo: 150 }], USER_ID)
+    ).toThrow(/30-250 bpm/);
+  });
+
+  it("keeps pace and heart-rate steps side by side in one workout", () => {
+    const ex = buildRunExercises(
+      [
+        { type: "warmup", distanceM: 2000, hrFrom: 120, hrTo: 140 },
+        { type: "work", distanceM: 800, paceFrom: "4:35", paceTo: "4:50" },
+      ],
+      USER_ID
+    );
+    expect(ex[0].intensityType).toBe(2);
+    expect(ex[1].intensityType).toBe(3);
+  });
+
   it("rejects empty and nested repeats", () => {
     expect(() =>
       buildRunExercises([{ type: "repeat", times: 3, steps: [] }], USER_ID)
@@ -192,9 +242,44 @@ describe("buildRunWorkoutPayload", () => {
     });
     expect(p.exercises).toHaveLength(5);
   });
+
+  it("describes a heart-rate workout at the workout level", () => {
+    const p = buildRunWorkoutPayload(
+      "Easy by HR",
+      "",
+      buildRunExercises([{ type: "work", durationSec: 1800, hrFrom: 130, hrTo: 145 }], USER_ID)
+    );
+    expect(p.referExercise).toEqual({
+      gradeSystem: 0,
+      hrType: 2,
+      intensityType: 2,
+      valueType: 1,
+    });
+  });
+
+  it("falls back to the unset descriptor when steps mix intensity types", () => {
+    const p = buildRunWorkoutPayload(
+      "Mixed",
+      "",
+      buildRunExercises(
+        [
+          { type: "warmup", durationSec: 600, hrFrom: 120, hrTo: 140 },
+          { type: "work", distanceM: 800, paceFrom: "4:35", paceTo: "4:50" },
+        ],
+        USER_ID
+      )
+    );
+    expect(p.referExercise.intensityType).toBe(0);
+  });
 });
 
 describe("describeStep", () => {
+  it("renders a heart-rate segment in bpm", () => {
+    expect(describeStep({ type: "work", durationSec: 600, hrFrom: 150, hrTo: 160 })).toBe(
+      "work 10:00 @ 150-160 bpm"
+    );
+  });
+
   it("renders segments and repeats readably", () => {
     expect(describeStep(REFERENCE_STEPS[0])).toBe("warmup 2km @ 6:30-7:00/km");
     expect(describeStep(REFERENCE_STEPS[1])).toBe(

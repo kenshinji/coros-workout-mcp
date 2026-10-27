@@ -3,13 +3,20 @@ import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { CatalogExercise } from "./types.js";
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
-
 let catalog: CatalogExercise[] | null = null;
+
+/**
+ * Supply the catalog directly instead of reading it from disk. The Cloudflare
+ * Worker does this — it has no filesystem, so the catalog is bundled (or
+ * fetched from KV) and handed over at startup.
+ */
+export function setCatalog(exercises: CatalogExercise[]): void {
+  catalog = exercises;
+}
 
 /** Returns the resolved path to data/exercises.json (for writing updates) */
 export function getCatalogPath(): string {
+  const __dirname = dirname(fileURLToPath(import.meta.url));
   const paths = [
     resolve(__dirname, "..", "data", "exercises.json"),
     resolve(__dirname, "..", "..", "data", "exercises.json"),

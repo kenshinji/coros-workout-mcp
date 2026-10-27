@@ -73,6 +73,48 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
 > - **fnm**: `~/.local/share/fnm/node-versions/<version>/installation/bin/node`
 > - **Homebrew**: `/opt/homebrew/bin/node`
 
+## Usage with claude.ai (Cloudflare Workers)
+
+Claude on the web and on your phone can only talk to an MCP server over HTTPS, so the
+same tools also run as a Cloudflare Worker (`src/worker.ts`) that you add as a **custom
+connector**. The Worker has no filesystem, so the COROS token lives in KV and the
+exercise catalog is bundled into the script.
+
+```bash
+npx wrangler login
+npx wrangler kv namespace create COROS_KV     # paste the id into wrangler.jsonc
+npx wrangler secret put MCP_SECRET            # a long random string, e.g. `openssl rand -hex 24`
+npx wrangler secret put COROS_EMAIL
+npx wrangler secret put COROS_PASSWORD
+npx wrangler secret put COROS_REGION          # "eu" or "us"
+npm run deploy
+```
+
+Then in claude.ai → **Settings → Connectors → Add custom connector**, use:
+
+```
+https://coros-workout-mcp.<your-subdomain>.workers.dev/mcp/<MCP_SECRET>
+```
+
+The secret is what keeps your COROS account private — the endpoint has no other
+authentication, and every other path returns 404. It can also be sent as an
+`Authorization: Bearer <MCP_SECRET>` header for clients that support headers. Without
+`MCP_SECRET` set the Worker refuses to serve anything.
+
+Local development against a simulated KV:
+
+```bash
+echo 'MCP_SECRET=dev-secret' > .dev.vars   # gitignored
+npm run dev:worker
+curl -X POST http://127.0.0.1:8787/mcp/dev-secret \
+  -H 'content-type: application/json' \
+  -H 'accept: application/json, text/event-stream' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}'
+```
+
+> **Note:** the Worker is single-tenant — it holds *your* COROS credentials, and anyone
+> with the URL acts as you. Don't share it.
+
 ## What's supported
 
 | Capability | Status |
@@ -93,12 +135,13 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
 | `authenticate_coros` | Log in with email/password (or auto-login from env vars) |
 | `check_coros_auth` | Verify current auth status |
 | `search_exercises` | Search ~383 exercises by name, muscle, body part, equipment |
-| `create_workout` | Build and push a strength workout to COROS |
-| `create_run_workout` | Build and push a structured running workout (intervals, tempo, fartlek, easy) |
-| `schedule_workout` | Put a saved workout on a calendar date |
+| `create_workout` | Build and push a strength workout to COROS (returns its id) |
+| `create_run_workout` | Build and push a structured running workout with pace or heart-rate targets (returns its id) |
+| `schedule_workout` | Put a saved workout on a calendar date, by id or by name |
+| `replace_scheduled_workout` | Swap the workout already on a date for another one, keeping that day's slot |
 | `list_scheduled_workouts` | List workouts scheduled between two dates |
 | `update_exercises` | Fetch the latest exercise catalog from COROS and rebuild locally |
-| `list_workouts` | List existing workouts |
+| `list_workouts` | List existing workouts with their ids |
 
 ## Example conversation
 
@@ -117,7 +160,7 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
 ## Running workouts
 
 A running workout is an ordered list of **steps**. Each step is a segment with a
-target and a pace range, or a `repeat` group wrapping other steps.
+target and an intensity range, or a `repeat` group wrapping other steps.
 
 | Field | Meaning |
 |-------|---------|
@@ -125,7 +168,12 @@ target and a pace range, or a `repeat` group wrapping other steps.
 | `distanceM` | Distance target in metres — use this **or** `durationSec`, not both |
 | `durationSec` | Duration target in seconds |
 | `paceFrom` / `paceTo` | Pace range bounds as `mm:ss` per km; order doesn't matter |
+| `hrFrom` / `hrTo` | Heart-rate range bounds in bpm — use this **or** the pace pair |
 | `times` | (`repeat` only) how many times to repeat its `steps` |
+
+Every segment needs exactly one intensity target: a pace range **or** a heart-rate
+range. Steps within one workout may use different ones (COROS calls that a "custom"
+intensity workout), though the watch screen is tidier when they all match.
 
 Repeats cannot be nested — that's an API limitation, not ours.
 
@@ -141,6 +189,19 @@ Repeats cannot be nested — that's an API limitation, not ours.
         { "type": "recovery", "durationSec": 150, "paceFrom": "7:00", "paceTo": "7:30" }
     ]},
     { "type": "cooldown", "distanceM": 2000, "paceFrom": "6:30", "paceTo": "7:30" }
+  ]
+}
+```
+
+**Easy run by heart rate** — zone-2 style, bpm bounds instead of pace:
+
+```json
+{
+  "name": "Easy 45min",
+  "steps": [
+    { "type": "warmup", "durationSec": 600,  "hrFrom": 110, "hrTo": 130 },
+    { "type": "work",   "durationSec": 1800, "hrFrom": 135, "hrTo": 150 },
+    { "type": "cooldown", "durationSec": 300, "hrFrom": 100, "hrTo": 125 }
   ]
 }
 ```
@@ -171,13 +232,27 @@ to a date so it shows up on that day in Training Hub and syncs to the watch:
 schedule_workout(workoutId: "1234567890123456789", date: "2026-09-08")
 ```
 
-Scheduling one day leaves the rest of the plan untouched. To move a workout, schedule
-it on the new date and remove the old entry in Training Hub — there's no delete tool
-yet.
+Scheduling one day leaves the rest of the plan untouched.
+
+If a day already has a workout and you want it to end up with just the new one, replace
+it rather than scheduling a second:
+
+```
+replace_scheduled_workout(date: "2026-11-04", workoutName: "Easy 45min")
+```
+
+That keeps the day's slot and swaps only the workout behind it. Pass `sortNoInSchedule`
+when the day holds more than one workout — `list_scheduled_workouts` prints the slot
+numbers. Removing a day's workout outright, and deleting a workout from the library, are
+still done in Training Hub: neither is exposed as a tool.
 
 ## Updating the exercise catalog
 
 The bundled exercise catalog (`data/exercises.json`) is a static snapshot. If COROS adds new exercises, use the `update_exercises` tool to refresh it. This fetches the latest exercises from the COROS API and i18n strings from the CDN, rebuilds the catalog, and reloads the in-memory cache — all in a single tool call. Requires authentication.
+
+Locally it rewrites `data/exercises.json`; on the Worker it writes the new catalog to KV,
+which then takes precedence over the bundled copy (so a `wrangler deploy` isn't needed to
+pick up new exercises).
 
 ## Auth notes
 
@@ -190,12 +265,16 @@ The bundled exercise catalog (`data/exercises.json`) is a static snapshot. If CO
   and vice versa. When the stored token is rejected, the server logs in again from those
   credentials and retries automatically, so a web login only costs one extra round-trip.
   Without credentials configured you'll need to call `authenticate_coros` again by hand.
-- Auth tokens are stored at `~/.config/coros-workout-mcp/auth.json` (mode 0600).
+- Auth tokens are stored at `~/.config/coros-workout-mcp/auth.json` (mode 0600) when
+  running over stdio, and in the `COROS_KV` namespace when running as a Worker.
 
 ## Development
 
 ```bash
-npm test           # Run unit tests
-npm run test:watch # Watch mode
-npm run build      # Compile TypeScript
+npm test               # Run unit tests
+npm run test:watch     # Watch mode
+npm run build          # Compile TypeScript (stdio server → dist/)
+npm run typecheck:worker  # Type-check the Worker build (wrangler bundles it with esbuild)
+npm run dev:worker     # Run the Worker locally
+npm run deploy         # Deploy the Worker to Cloudflare
 ```

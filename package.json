@@ -13,16 +13,21 @@
     "prepare-catalog": "tsx scripts/prepare-catalog.ts",
     "test": "vitest run",
     "test:watch": "vitest",
-    "start": "node dist/index.js"
+    "start": "node dist/index.js",
+    "dev:worker": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "typecheck:worker": "tsc --noEmit -p tsconfig.worker.json"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.12.1",
     "zod": "^3.24.2"
   },
   "devDependencies": {
+    "@cloudflare/workers-types": "^5.20260907.1",
     "@types/node": "^22.15.0",
     "tsx": "^4.19.4",
     "typescript": "^5.8.3",
-    "vitest": "^3.1.1"
+    "vitest": "^3.1.1",
+    "wrangler": "^4.129.0"
   }
 }
