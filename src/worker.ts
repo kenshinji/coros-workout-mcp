@@ -8,6 +8,7 @@
  * script (with a KV copy taking precedence once `update_exercises` writes one).
  */
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
+import { SUPPORTED_PROTOCOL_VERSIONS } from "@modelcontextprotocol/sdk/types.js";
 import bundledCatalog from "../data/exercises.json";
 import { createServer } from "./mcp-server.js";
 import { setAuthStore, type AuthStore } from "./auth-store.js";
@@ -157,10 +158,22 @@ export default {
     // send only application/json; since `enableJsonResponse` means the reply is
     // JSON either way, widen the header rather than fail the call.
     const accept = request.headers.get("accept") ?? "";
+    const protocolVersion = request.headers.get("mcp-protocol-version");
+    const acceptTooNarrow =
+      !accept.includes("text/event-stream") || !accept.includes("application/json");
+    // Claude probes with a protocol version newer than this SDK knows; the SDK
+    // answers 400, which reads to the client as a broken server. Dropping the
+    // header lets it reply in protocol terms (an unknown method is a JSON-RPC
+    // error, not an HTTP failure) and negotiate down.
+    const protocolUnknown =
+      protocolVersion !== null &&
+      !(SUPPORTED_PROTOCOL_VERSIONS as readonly string[]).includes(protocolVersion);
+
     let normalized = request;
-    if (!accept.includes("text/event-stream") || !accept.includes("application/json")) {
+    if (acceptTooNarrow || protocolUnknown) {
       const headers = new Headers(request.headers);
-      headers.set("accept", "application/json, text/event-stream");
+      if (acceptTooNarrow) headers.set("accept", "application/json, text/event-stream");
+      if (protocolUnknown) headers.delete("mcp-protocol-version");
       normalized = new Request(request, { headers });
     }
 
@@ -174,7 +187,8 @@ export default {
         rpc: (parsedBody as { method?: string } | undefined)?.method,
         accept,
         ua: request.headers.get("user-agent"),
-        protocolVersion: request.headers.get("mcp-protocol-version"),
+        protocolVersion,
+        protocolUnknown,
       })
     );
 
