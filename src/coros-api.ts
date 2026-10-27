@@ -11,6 +11,7 @@ import type {
   RunExercisePayload,
   RunCalculateResult,
   SchedulePlan,
+  ScheduleEntity,
 } from "./types.js";
 import {
   REGION_URLS,
@@ -696,6 +697,121 @@ export async function getWorkoutDetail(
  * `idInPlan` is a plan-wide counter: the next slot takes maxIdInPlan + 1, and
  * the same value links the entity, the program copy and the version object.
  */
+/**
+ * The exercise list as a schedule write wants it: the web client zeroes the
+ * intensity percentages and lets the server recompute them from the athlete's
+ * current threshold pace and heart-rate profile.
+ */
+function scheduleExercises(
+  program: Record<string, unknown>
+): Record<string, unknown>[] | undefined {
+  return (program.exercises as Record<string, unknown>[] | undefined)?.map((e) => ({
+    ...e,
+    intensityPercent: 0,
+    intensityPercentExtend: 0,
+  }));
+}
+
+/**
+ * Pick the slot to act on out of a day's scheduled entities. With more than one
+ * workout on the day the caller has to say which, since guessing would edit the
+ * wrong session.
+ */
+export function pickScheduledEntity(
+  entities: ScheduleEntity[],
+  happenDay: string,
+  sortNoInSchedule?: number
+): ScheduleEntity {
+  const onDay = entities.filter((e) => String(e.happenDay) === happenDay);
+  if (onDay.length === 0) {
+    throw new Error(
+      `Nothing is scheduled on ${happenDay}. Use schedule_workout to put a workout there.`
+    );
+  }
+  if (sortNoInSchedule != null) {
+    const match = onDay.find((e) => e.sortNoInSchedule === sortNoInSchedule);
+    if (!match) {
+      throw new Error(
+        `No workout with sortNoInSchedule ${sortNoInSchedule} on ${happenDay} (that day has ${onDay
+          .map((e) => e.sortNoInSchedule)
+          .join(", ")}).`
+      );
+    }
+    return match;
+  }
+  if (onDay.length > 1) {
+    throw new Error(
+      `${onDay.length} workouts are scheduled on ${happenDay}; pass sortNoInSchedule (${onDay
+        .map((e) => e.sortNoInSchedule)
+        .join(", ")}) to say which one to replace.`
+    );
+  }
+  return onDay[0];
+}
+
+/**
+ * Body for swapping the workout in an existing slot. `status: 3` in
+ * `versionObjects` deletes a slot and `1` adds one; `2` edits the one already
+ * there, keeping its `idInPlan` so the calendar position stays put. planId and
+ * planProgramId are echoed back from the slot, as the web client does.
+ */
+export function buildReplaceScheduleBody(
+  entity: ScheduleEntity,
+  program: Record<string, unknown>
+): Record<string, unknown> {
+  const exercises = scheduleExercises(program);
+  return {
+    entities: [entity],
+    programs: [
+      { ...program, ...(exercises ? { exercises } : {}), idInPlan: entity.idInPlan },
+    ],
+    versionObjects: [
+      {
+        id: entity.idInPlan,
+        status: 2,
+        ...(entity.planProgramId != null ? { planProgramId: entity.planProgramId } : {}),
+        ...(entity.planId != null ? { planId: entity.planId } : {}),
+      },
+    ],
+    pbVersion: program.pbVersion ?? 2,
+  };
+}
+
+/**
+ * Swap the workout scheduled on a date for a different one, in place. The day
+ * keeps its slot: only the workout behind it changes.
+ */
+export async function replaceScheduledWorkout(
+  auth: AuthData,
+  workoutId: string,
+  date: string,
+  sortNoInSchedule?: number
+): Promise<{ happenDay: string; name: string; previousName: string | null }> {
+  const happenDay = toApiDate(date);
+
+  const [plan, program] = await Promise.all([
+    querySchedule(auth, happenDay, happenDay),
+    getWorkoutDetail(auth, workoutId),
+  ]);
+
+  const entity = pickScheduledEntity(plan.entities ?? [], happenDay, sortNoInSchedule);
+  const previous = (plan.programs ?? []).find(
+    (p) => String(p.idInPlan) === String(entity.idInPlan)
+  );
+
+  await apiPost(
+    auth,
+    "/training/schedule/update",
+    buildReplaceScheduleBody(entity, program)
+  );
+
+  return {
+    happenDay,
+    name: String(program.name ?? workoutId),
+    previousName: previous ? previous.name : null,
+  };
+}
+
 export async function scheduleWorkout(
   auth: AuthData,
   workoutId: string,
@@ -711,11 +827,7 @@ export async function scheduleWorkout(
 
   const idInPlan = Number(plan.maxIdInPlan ?? 0) + 1;
 
-  // The web client zeroes these out; the server recomputes them from the
-  // athlete's current threshold pace. Sending our own values is pointless.
-  const exercises = (program.exercises as Record<string, unknown>[] | undefined)?.map(
-    (e) => ({ ...e, intensityPercent: 0, intensityPercentExtend: 0 })
-  );
+  const exercises = scheduleExercises(program);
 
   const body = {
     entities: [{ happenDay, idInPlan, sortNoInSchedule }],

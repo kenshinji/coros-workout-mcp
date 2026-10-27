@@ -458,6 +458,16 @@ export interface ScheduleEntity {
   idInPlan: string | number;
   sortNoInSchedule: number;
   id?: string;
+  /**
+   * Present on slots that came from a training plan. Editing a slot has to
+   * echo them back, so they are carried through untouched.
+   */
+  planId?: string | number;
+  planProgramId?: string | number;
+  labelId?: string | number;
+  sortNo?: number;
+  dayNo?: number;
+  sortNoInPlan?: number;
 }
 
 export interface SchedulePlanProgram {

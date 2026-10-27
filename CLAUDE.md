@@ -114,7 +114,21 @@ Writing is `POST /training/schedule/update`:
 - The write is an upsert of the listed slots — other days are untouched.
 - `scheduleWorkout()` reproduces this body byte-for-byte against a captured web-client
   request.
-- Not captured yet: removing a scheduled workout.
+- **`versionObjects[].status` is the operation**, decoded from the calendar component in the
+  web bundle (`index-IiC08o2l.js`) and verified against the live API: `1` adds a slot, `2`
+  edits the one already there, `3` removes it.
+- Editing in place (`status: 2`, `replaceScheduledWorkout()`) sends the day's existing entity
+  back untouched and gives the new program that slot's `idInPlan`, so the calendar position
+  survives the swap. The slot's `planId`/`planProgramId` are echoed in `versionObjects`.
+- A personal calendar is itself a plan: entities read back carry `planId` (the athlete's
+  schedule plan) and `planProgramId` (equal to `idInPlan`), alongside `id`, `sortNo`, `dayNo`
+  and progress fields. Pass the whole entity through rather than rebuilding it.
+- Removing a slot works but is deliberately not exposed as a tool. It is
+  `{versionObjects: [{type: 0, id: idInPlan, status: 3, planId, planProgramId}], pbVersion: 2}`
+  with no `entities`/`programs`; **omitting `planId`/`planProgramId` fails with result
+  `17004` ("Plan data is illegal")**, as does sending `entities` alongside.
+- `/training/program/delete` (POST, body `[workoutId]`) deletes a workout from the library.
+  Also not exposed as a tool — it is irreversible.
 
 ## Exercise Catalog
 

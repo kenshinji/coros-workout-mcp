@@ -138,6 +138,7 @@ curl -X POST http://127.0.0.1:8787/mcp/dev-secret \
 | `create_workout` | Build and push a strength workout to COROS (returns its id) |
 | `create_run_workout` | Build and push a structured running workout with pace or heart-rate targets (returns its id) |
 | `schedule_workout` | Put a saved workout on a calendar date, by id or by name |
+| `replace_scheduled_workout` | Swap the workout already on a date for another one, keeping that day's slot |
 | `list_scheduled_workouts` | List workouts scheduled between two dates |
 | `update_exercises` | Fetch the latest exercise catalog from COROS and rebuild locally |
 | `list_workouts` | List existing workouts with their ids |
@@ -231,9 +232,19 @@ to a date so it shows up on that day in Training Hub and syncs to the watch:
 schedule_workout(workoutId: "1234567890123456789", date: "2026-09-08")
 ```
 
-Scheduling one day leaves the rest of the plan untouched. To move a workout, schedule
-it on the new date and remove the old entry in Training Hub — there's no delete tool
-yet.
+Scheduling one day leaves the rest of the plan untouched.
+
+If a day already has a workout and you want it to end up with just the new one, replace
+it rather than scheduling a second:
+
+```
+replace_scheduled_workout(date: "2026-11-04", workoutName: "Easy 45min")
+```
+
+That keeps the day's slot and swaps only the workout behind it. Pass `sortNoInSchedule`
+when the day holds more than one workout — `list_scheduled_workouts` prints the slot
+numbers. Removing a day's workout outright, and deleting a workout from the library, are
+still done in Training Hub: neither is exposed as a tool.
 
 ## Updating the exercise catalog
 

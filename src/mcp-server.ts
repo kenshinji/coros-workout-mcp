@@ -13,6 +13,7 @@ import {
   calculateRunWorkout,
   addRunWorkout,
   scheduleWorkout,
+  replaceScheduledWorkout,
   findWorkoutIdByName,
   querySchedule,
   toApiDate,
@@ -573,6 +574,76 @@ export function createServer(options: CreateServerOptions = {}): McpServer {
     }
   );
 
+  // --- Tool: replace_scheduled_workout ---
+  server.tool(
+    "replace_scheduled_workout",
+    "Swap the workout already scheduled on a date for a different one, keeping that day's slot. Use this instead of scheduling a second workout when the day should end up with just the new one. Identify the replacement by workoutId or workoutName; use list_scheduled_workouts first to see what is on the day.",
+    {
+      date: z.string().describe("The day to change, YYYY-MM-DD (e.g. '2026-11-04')"),
+      workoutId: z
+        .string()
+        .optional()
+        .describe("Id of the workout to put there, from create_workout/create_run_workout/list_workouts"),
+      workoutName: z
+        .string()
+        .optional()
+        .describe("Name of the workout to put there, when the id isn't known — the newest workout with this name is used"),
+      sortNoInSchedule: z
+        .number()
+        .min(1)
+        .optional()
+        .describe("Which slot to replace, when that day has more than one workout (see list_scheduled_workouts)"),
+    },
+    async ({ date, workoutId, workoutName, sortNoInSchedule }) => {
+      try {
+        const auth = await getValidAuth();
+        if (!auth) {
+          return {
+            content: [{ type: "text" as const, text: "Not authenticated. Use authenticate_coros first." }],
+            isError: true,
+          };
+        }
+        const id = workoutId ?? (workoutName ? await findWorkoutIdByName(auth, workoutName) : null);
+        if (!id) {
+          return {
+            content: [
+              {
+                type: "text" as const,
+                text: workoutName
+                  ? `No workout named "${workoutName}" found. Use list_workouts to see what exists.`
+                  : "Pass either workoutId or workoutName.",
+              },
+            ],
+            isError: true,
+          };
+        }
+        const res = await replaceScheduledWorkout(auth, id, date, sortNoInSchedule);
+        const d = res.happenDay;
+        const when = `${d.slice(0, 4)}-${d.slice(4, 6)}-${d.slice(6)}`;
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: res.previousName
+                ? `Replaced "${res.previousName}" with "${res.name}" on ${when}. It will sync to your COROS watch.`
+                : `Put "${res.name}" on ${when}, replacing what was scheduled there. It will sync to your COROS watch.`,
+            },
+          ],
+        };
+      } catch (error) {
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: `Failed to replace the scheduled workout: ${error instanceof Error ? error.message : String(error)}`,
+            },
+          ],
+          isError: true,
+        };
+      }
+    }
+  );
+
   // --- Tool: list_scheduled_workouts ---
   server.tool(
     "list_scheduled_workouts",
@@ -609,7 +680,7 @@ export function createServer(options: CreateServerOptions = {}): McpServer {
             // Not the library id: scheduling copies the workout into the plan
             // document, and this is the copy's id. schedule_workout needs the
             // id from list_workouts.
-            return `  ${when}: ${p.name} (scheduled copy ${p.id})${km}${mins}`;
+            return `  ${when}: ${p.name} (slot ${e.sortNoInSchedule}, scheduled copy ${p.id})${km}${mins}`;
           });
 
         return {
