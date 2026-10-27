@@ -17,6 +17,7 @@ import {
   RUN_SOURCE_URL,
   type RunStep,
   type RunSegmentKind,
+  type RunSegmentStep,
   type RunExercisePayload,
   type RunWorkoutPayload,
 } from "./types.js";
@@ -54,6 +55,102 @@ function resolvePaceRange(step: {
   return { fast: Math.min(a, b), slow: Math.max(a, b) };
 }
 
+/** Validate a heart-rate range and return it low-first, in bpm. */
+function resolveHrRange(step: {
+  hrFrom?: number;
+  hrTo?: number;
+}): { low: number; high: number } {
+  if (step.hrFrom == null || step.hrTo == null) {
+    throw new Error("Both hrFrom and hrTo are required for a heart-rate segment.");
+  }
+  for (const bpm of [step.hrFrom, step.hrTo]) {
+    if (!Number.isFinite(bpm) || bpm < 30 || bpm > 250) {
+      throw new Error(`Heart rate ${bpm} is outside the supported 30-250 bpm range.`);
+    }
+  }
+  const low = Math.round(Math.min(step.hrFrom, step.hrTo));
+  const high = Math.round(Math.max(step.hrFrom, step.hrTo));
+  return { low, high };
+}
+
+export type RunIntensityKind = "pace" | "heartRate";
+
+/** Which intensity a segment carries. Exactly one of the two must be given. */
+export function intensityKind(step: RunSegmentStep): RunIntensityKind {
+  const hasPace = step.paceFrom != null || step.paceTo != null;
+  const hasHr = step.hrFrom != null || step.hrTo != null;
+  if (hasPace && hasHr) {
+    throw new Error(
+      `Segment "${step.type}" has both a pace range and a heart-rate range. Pick one.`
+    );
+  }
+  if (hasHr) return "heartRate";
+  if (hasPace) return "pace";
+  throw new Error(
+    `Segment "${step.type}" needs either a pace range (paceFrom/paceTo) or a heart-rate range (hrFrom/hrTo).`
+  );
+}
+
+/** The intensity half of a segment payload; pace and heart rate encode differently. */
+type IntensityFields = Pick<
+  RunExercisePayload,
+  | "hrType"
+  | "intensityCustom"
+  | "intensityDisplayUnit"
+  | "intensityMultiplier"
+  | "intensityPercent"
+  | "intensityPercentExtend"
+  | "intensityType"
+  | "intensityValue"
+  | "intensityValueExtend"
+  | "isIntensityPercent"
+>;
+
+/**
+ * intensityType names come from the Training Hub web client: 1=weight,
+ * 2=heart, 3=pace, 6=power, 8=adjustedPace. hrType picks the heart-rate basis
+ * (1=% max HR, 2=reserve, 3=threshold HR) and intensityCustom carries a zone
+ * number when the athlete picked one of their five zones instead of a range.
+ */
+function buildIntensity(step: RunSegmentStep): IntensityFields {
+  if (intensityKind(step) === "heartRate") {
+    const { low, high } = resolveHrRange(step);
+    return {
+      // What the web client normalises a plain bpm range to: hrType 2,
+      // no percent, no zone.
+      hrType: 2,
+      intensityCustom: 0,
+      intensityDisplayUnit: 0,
+      // Only pace carries the x1000 multiplier; bpm goes over the wire as-is.
+      intensityMultiplier: 0,
+      // Display-only, like the pace percentages: the server recomputes them
+      // from the athlete's heart-rate profile.
+      intensityPercent: 0,
+      intensityPercentExtend: 0,
+      intensityType: 2,
+      intensityValue: low,
+      intensityValueExtend: high,
+      isIntensityPercent: false,
+    };
+  }
+
+  const { fast, slow } = resolvePaceRange(step);
+  return {
+    hrType: 0,
+    intensityCustom: 0,
+    intensityDisplayUnit: 1,
+    intensityMultiplier: 1000,
+    // Left at 0 like the official web client: the server derives these from
+    // the athlete's current threshold pace and overwrites whatever we send.
+    intensityPercent: 0,
+    intensityPercentExtend: 0,
+    intensityType: 3, // pace range
+    intensityValue: fast * 1000,
+    intensityValueExtend: slow * 1000,
+    isIntensityPercent: false,
+  };
+}
+
 /** sortNo encodes position: top-level index in bits 24+, child index in bits 16+. */
 export function runSortNo(topIndex: number, childIndex = 0): number {
   return (topIndex << 24) | (childIndex << 16);
@@ -72,7 +169,7 @@ function buildSegment(
   ctx: BuildContext
 ): RunExercisePayload {
   const tpl = RUN_SEGMENT_TEMPLATES[kind];
-  const { fast, slow } = resolvePaceRange(step);
+  const intensity = buildIntensity(step);
 
   const hasDistance = step.distanceM != null;
   const hasDuration = step.durationSec != null;
@@ -92,21 +189,10 @@ function buildSegment(
     exerciseType: tpl.exerciseType,
     gradeSystem: 0,
     groupId,
-    hrType: 0,
     id: String(ctx.nextId++),
-    intensityCustom: 0,
-    intensityDisplayUnit: 1,
-    intensityMultiplier: 1000,
-    // Left at 0 like the official web client: the server derives these from
-    // the athlete's current threshold pace and overwrites whatever we send.
-    intensityPercent: 0,
-    intensityPercentExtend: 0,
-    intensityType: 3, // pace range
-    intensityValue: fast * 1000,
-    intensityValueExtend: slow * 1000,
+    ...intensity,
     isDefaultAdd: 0,
     isGroup: false,
-    isIntensityPercent: false,
     name: tpl.name,
     onsightGradeOffset: 0,
     originId: tpl.originId,
@@ -236,6 +322,22 @@ export function buildRunExercises(
   return out;
 }
 
+/**
+ * The workout-level "quick intensity" descriptor. The web client fills it in
+ * when every step shares one intensity type and leaves it unset ("custom")
+ * otherwise; a pace-only workout keeps the shape this server has always sent.
+ */
+function referExerciseFor(
+  exercises: RunExercisePayload[]
+): RunWorkoutPayload["referExercise"] {
+  const segments = exercises.filter((e) => !e.isGroup);
+  const allHeartRate =
+    segments.length > 0 && segments.every((e) => e.intensityType === 2);
+  return allHeartRate
+    ? { gradeSystem: 0, hrType: 2, intensityType: 2, valueType: 1 }
+    : { gradeSystem: 0, hrType: 3, intensityType: 0, valueType: 1 };
+}
+
 export function buildRunWorkoutPayload(
   name: string,
   overview: string,
@@ -270,7 +372,7 @@ export function buildRunWorkoutPayload(
     poolLength: 0,
     poolLengthId: 0,
     poolLengthUnit: 0,
-    referExercise: { gradeSystem: 0, hrType: 3, intensityType: 0, valueType: 1 },
+    referExercise: referExerciseFor(exercises),
     sex: 0,
     shareUrl: "",
     simple: false,
@@ -305,6 +407,10 @@ export function describeStep(step: RunStep): string {
         ? `${step.distanceM / 1000}km`
         : `${step.distanceM}m`
       : `${Math.floor(step.durationSec! / 60)}:${String(step.durationSec! % 60).padStart(2, "0")}`;
+  if (intensityKind(step) === "heartRate") {
+    const { low, high } = resolveHrRange(step);
+    return `${step.type} ${target} @ ${low}-${high} bpm`;
+  }
   const { fast, slow } = resolvePaceRange(step);
   return `${step.type} ${target} @ ${formatPace(fast)}-${formatPace(slow)}/km`;
 }

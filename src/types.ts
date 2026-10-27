@@ -327,6 +327,9 @@ export interface RunSegmentStep {
   /** Pace range bounds as "mm:ss" per km; order does not matter. */
   paceFrom?: string;
   paceTo?: string;
+  /** Heart-rate range bounds in bpm; order does not matter. */
+  hrFrom?: number;
+  hrTo?: number;
 }
 
 export interface RunRepeatStep {

@@ -412,8 +412,28 @@ export function createServer(options: CreateServerOptions = {}): McpServer {
       .min(1)
       .optional()
       .describe("Duration target in seconds (e.g. 150). Use this OR distanceM, not both."),
-    paceFrom: z.string().describe('Fast end of the pace range, mm:ss per km (e.g. "4:35")'),
-    paceTo: z.string().describe('Slow end of the pace range, mm:ss per km (e.g. "4:50")'),
+    paceFrom: z
+      .string()
+      .optional()
+      .describe('Fast end of the pace range, mm:ss per km (e.g. "4:35"). Pace and heart rate are alternatives — give one pair, not both.'),
+    paceTo: z
+      .string()
+      .optional()
+      .describe('Slow end of the pace range, mm:ss per km (e.g. "4:50")'),
+    hrFrom: z
+      .number()
+      .int()
+      .min(30)
+      .max(250)
+      .optional()
+      .describe("Low end of the heart-rate range in bpm (e.g. 140). Use hrFrom/hrTo instead of paceFrom/paceTo to target heart rate."),
+    hrTo: z
+      .number()
+      .int()
+      .min(30)
+      .max(250)
+      .optional()
+      .describe("High end of the heart-rate range in bpm (e.g. 150)"),
   });
 
   const RunStepSchema = z.union([
@@ -427,7 +447,7 @@ export function createServer(options: CreateServerOptions = {}): McpServer {
 
   server.tool(
     "create_run_workout",
-    "Create a structured running workout (intervals, tempo, fartlek, easy run) on COROS Training Hub. Steps are warmup/work/recovery/cooldown segments, each with a distance or duration target and a pace range; wrap steps in a 'repeat' step for intervals. The workout syncs to the user's COROS watch.",
+    "Create a structured running workout (intervals, tempo, fartlek, easy run) on COROS Training Hub. Steps are warmup/work/recovery/cooldown segments, each with a distance or duration target and an intensity target — either a pace range (paceFrom/paceTo) or a heart-rate range in bpm (hrFrom/hrTo). Wrap steps in a 'repeat' step for intervals. The workout syncs to the user's COROS watch.",
     {
       name: z.string().describe("Workout name (e.g. 'Intervals 5x800m')"),
       overview: z.string().default("").describe("Workout description"),

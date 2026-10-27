@@ -136,7 +136,7 @@ curl -X POST http://127.0.0.1:8787/mcp/dev-secret \
 | `check_coros_auth` | Verify current auth status |
 | `search_exercises` | Search ~383 exercises by name, muscle, body part, equipment |
 | `create_workout` | Build and push a strength workout to COROS (returns its id) |
-| `create_run_workout` | Build and push a structured running workout (intervals, tempo, fartlek, easy; returns its id) |
+| `create_run_workout` | Build and push a structured running workout with pace or heart-rate targets (returns its id) |
 | `schedule_workout` | Put a saved workout on a calendar date, by id or by name |
 | `list_scheduled_workouts` | List workouts scheduled between two dates |
 | `update_exercises` | Fetch the latest exercise catalog from COROS and rebuild locally |
@@ -159,7 +159,7 @@ curl -X POST http://127.0.0.1:8787/mcp/dev-secret \
 ## Running workouts
 
 A running workout is an ordered list of **steps**. Each step is a segment with a
-target and a pace range, or a `repeat` group wrapping other steps.
+target and an intensity range, or a `repeat` group wrapping other steps.
 
 | Field | Meaning |
 |-------|---------|
@@ -167,7 +167,12 @@ target and a pace range, or a `repeat` group wrapping other steps.
 | `distanceM` | Distance target in metres — use this **or** `durationSec`, not both |
 | `durationSec` | Duration target in seconds |
 | `paceFrom` / `paceTo` | Pace range bounds as `mm:ss` per km; order doesn't matter |
+| `hrFrom` / `hrTo` | Heart-rate range bounds in bpm — use this **or** the pace pair |
 | `times` | (`repeat` only) how many times to repeat its `steps` |
+
+Every segment needs exactly one intensity target: a pace range **or** a heart-rate
+range. Steps within one workout may use different ones (COROS calls that a "custom"
+intensity workout), though the watch screen is tidier when they all match.
 
 Repeats cannot be nested — that's an API limitation, not ours.
 
@@ -183,6 +188,19 @@ Repeats cannot be nested — that's an API limitation, not ours.
         { "type": "recovery", "durationSec": 150, "paceFrom": "7:00", "paceTo": "7:30" }
     ]},
     { "type": "cooldown", "distanceM": 2000, "paceFrom": "6:30", "paceTo": "7:30" }
+  ]
+}
+```
+
+**Easy run by heart rate** — zone-2 style, bpm bounds instead of pace:
+
+```json
+{
+  "name": "Easy 45min",
+  "steps": [
+    { "type": "warmup", "durationSec": 600,  "hrFrom": 110, "hrTo": 130 },
+    { "type": "work",   "durationSec": 1800, "hrFrom": 135, "hrTo": 150 },
+    { "type": "cooldown", "durationSec": 300, "hrFrom": 100, "hrTo": 125 }
   ]
 }
 ```

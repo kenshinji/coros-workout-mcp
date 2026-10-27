@@ -64,8 +64,26 @@ Derived from workouts created in the COROS web app and read back via `/training/
 - `exerciseType`: 1=warm-up, 2=work, 3=cool-down, 4=recovery, 0=repeat group (`isGroup: true`, `sets` = repeat count, children carry its `id` as `groupId`).
 - `sortNo`: `topIndex << 24`, with repeat children OR-ing in `childIndex << 16`. Both indices are 1-based.
 - `targetType`: 5=distance (`targetValue` in **centimetres**), 2=duration (seconds). `targetDisplayUnit`: 1=km, 2=m, 0=time.
+- `intensityType` (from the Training Hub bundle's `intensityTypeName` map): 0=notSet, 1=weight,
+  2=heart, 3=pace, 4=speed, 5=swimmingStyle, 6=power, 7=cadence, 8=adjustedPace, 9=ftp,
+  10=gradeSystem, 11=rpe. Running uses 3 (pace) or 2 (heart rate).
 - `intensityType: 3` = pace range. `intensityValue`/`intensityValueExtend` are sec/km × 1000, **fastest first**.
+- `intensityType: 2` = heart rate. `intensityValue`/`intensityValueExtend` are **plain bpm, low
+  first** — `intensityMultiplier` stays 0, unlike pace. `hrType` picks the basis: 1=% max HR,
+  2=heart-rate reserve, 3=threshold HR; the web client normalises a plain bpm range to
+  `hrType: 2, intensityCustom: 0, isIntensityPercent: false`. `intensityCustom` otherwise holds
+  the athlete's zone number (1-5) and the percent fields hold that zone's bounds. Percent-based
+  targets (% max HR / reserve / threshold HR) set `isIntensityPercent: true` with the percentages
+  in `intensityPercent`/`intensityPercentExtend` — not implemented here, since they need the
+  athlete's HR profile from `/account/query`.
+- Decoded from the official web client at
+  `static.coros.com/coros-traininghub-v2/assets/` (chunk `index-REmK04-E.js`: the
+  `intensityTypeName` map, `{maxHr:1,rhr:2,lthr:3}`, and the serializer's `"heart"` branch).
 - `intensityPercent`/`intensityPercentExtend` are percent-of-threshold-pace × 1000, paired **crossed** against the values (the slower pace carries the lower percent). Display-only — the watch follows `intensityValue`. Computed from `DEFAULT_THRESHOLD_PACE_SEC`.
+- Workout-level `referExercise` is the "quick intensity" descriptor. All-pace workouts keep the
+  long-standing `{gradeSystem:0, hrType:3, intensityType:0, valueType:1}`; all-heart-rate ones
+  send `{gradeSystem:0, hrType:2, intensityType:2, valueType:1}`; mixed workouts leave it unset,
+  which is what the web client's `fastIntensityTypeName: "custom"` does.
 - `/calculate` returns `planDuration`, `planDistance`, `planSets`, `planTrainingLoad` for running (not the flat shape the strength endpoint returns).
 - Nested repeats are not supported by the API.
 - `intensityPercent`/`intensityPercentExtend` are sent as `0`: the server derives them
